@@ -14,15 +14,16 @@ from pydantic import BaseModel
 from app.api.deps import CurrentUser
 from app.core.config import settings as app_settings
 from kos_extensions.tenant_deps import get_tenant_registry, TenantRegistry
-from kos_extensions.workbench.experiment_runner import ExperimentRunner
 
 csv.field_size_limit(sys.maxsize)
 
 router = APIRouter(prefix="/workbench", tags=["workbench"])
 
 
-def _make_runner(reg: TenantRegistry) -> ExperimentRunner:
-    """Create an ExperimentRunner wired to the tenant's providers."""
+def _make_runner(reg: TenantRegistry):
+    """Create an ExperimentRunner wired to the tenant's providers (lazy import)."""
+    from kos_extensions.workbench.experiment_runner import ExperimentRunner
+
     return ExperimentRunner(
         object_store=reg.object_store,
         text_search=reg.text_search,
