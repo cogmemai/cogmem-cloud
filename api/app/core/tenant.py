@@ -104,18 +104,26 @@ async def provision_tenant(user_id: uuid.UUID) -> str:
     """Create an isolated SurrealDB database for a new tenant.
 
     Returns the tenant_id (database name).
+
+    Note: The surrealdb Python library uses a blocking WebSocket connection.
+    The Surreal() constructor auto-connects; there is no separate .connect().
+    We run the blocking calls in a thread to avoid blocking the event loop.
     """
+    import asyncio
+    import functools
+
     tenant_id = make_tenant_id(user_id)
     logger.info("Provisioning tenant database: %s", tenant_id)
 
-    db = Surreal(settings.SURREALDB_URL)
-    try:
-        await db.connect()
-        await db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
-        await db.use(settings.SURREALDB_NAMESPACE, tenant_id)
-        await db.query(TENANT_SCHEMA)
-        logger.info("Tenant %s provisioned successfully", tenant_id)
-    finally:
-        await db.close()
+    def _provision_sync() -> str:
+        db = Surreal(settings.SURREALDB_URL)
+        try:
+            db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+            db.use(settings.SURREALDB_NAMESPACE, tenant_id)
+            db.query(TENANT_SCHEMA)
+            logger.info("Tenant %s provisioned successfully", tenant_id)
+        finally:
+            db.close()
+        return tenant_id
 
-    return tenant_id
+    return await asyncio.get_event_loop().run_in_executor(None, _provision_sync)
