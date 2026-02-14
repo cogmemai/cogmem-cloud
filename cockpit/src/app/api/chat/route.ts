@@ -31,7 +31,7 @@ export async function POST(req: Request) {
   const modelMessages = await convertToModelMessages(messages);
 
   const result = streamText({
-    model: backend("openai/gpt-4o-mini"),
+    model: backend.chat("openai/gpt-4o-mini"),
     messages: modelMessages,
   });
 

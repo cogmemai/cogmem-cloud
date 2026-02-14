@@ -130,6 +130,30 @@ def read_user_me(current_user: CurrentUser) -> Any:
     return current_user
 
 
+@router.post("/me/provision-tenant", response_model=UserPublic)
+async def provision_tenant_for_me(
+    session: SessionDep, current_user: CurrentUser
+) -> Any:
+    """
+    (Re-)provision the SurrealDB tenant database for the current user.
+    Useful when initial provisioning failed at signup (pending_ prefix).
+    """
+    try:
+        tenant_id = await provision_tenant(current_user.id)
+        current_user.tenant_id = tenant_id
+        session.add(current_user)
+        session.commit()
+        session.refresh(current_user)
+        logger.info("Tenant %s (re-)provisioned for user %s", tenant_id, current_user.email)
+    except Exception:
+        logger.exception("Failed to provision tenant for user %s", current_user.email)
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to provision tenant database. Is SurrealDB reachable?",
+        )
+    return current_user
+
+
 @router.delete("/me", response_model=Message)
 def delete_user_me(session: SessionDep, current_user: CurrentUser) -> Any:
     """

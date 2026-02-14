@@ -51,6 +51,10 @@ def _get_client() -> AsyncOpenAI:
 
 async def _ingest_chat_turn_bg(user_id: str, tenant_id: str, user_msg: str, assistant_msg: str):
     """Background task: ingest a chat turn into the KOS pipeline."""
+    if not tenant_id or tenant_id.startswith("pending_"):
+        logger.warning("Skipping KOS ingestion — tenant %s not provisioned", tenant_id)
+        return
+
     from kos.providers.surrealdb.client import SurrealDBClient
     from kos_extensions.registry import CloudProviderRegistry
     from kos_extensions.ingest import ingest_chat_turn
