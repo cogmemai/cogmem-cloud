@@ -98,7 +98,7 @@ const data = {
     },
     {
       name: "Audit Logs",
-      url: "#",
+      url: "/logs",
       icon: IconReport,
     },
     {

@@ -204,6 +204,115 @@ async def get_entity(entity_id: str, reg: TenantRegistry = Depends(get_tenant_re
 
 # --- Ingestion ---
 
+class LogsQuery(BaseModel):
+    limit: int = 100
+    offset: int = 0
+    level: str | None = None
+    agent: str | None = None
+    event_type: str | None = None
+    correlation_id: str | None = None
+
+
+@router.get("/logs")
+async def get_kos_logs(
+    limit: int = 100,
+    offset: int = 0,
+    level: str | None = None,
+    agent: str | None = None,
+    event_type: str | None = None,
+    correlation_id: str | None = None,
+    current_user: CurrentUser = Depends(),
+    reg: TenantRegistry = Depends(get_tenant_registry),
+):
+    """Query the kos_logs table (application-level pipeline logs)."""
+    where_clauses = []
+    params: dict = {"limit": limit, "offset": offset}
+
+    if level:
+        where_clauses.append("level = $level")
+        params["level"] = level
+    if agent:
+        where_clauses.append("agent = $agent")
+        params["agent"] = agent
+    if event_type:
+        where_clauses.append("event_type CONTAINS $event_type")
+        params["event_type"] = event_type
+    if correlation_id:
+        where_clauses.append("correlation_id = $correlation_id")
+        params["correlation_id"] = correlation_id
+
+    where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    query = f"SELECT * FROM kos_logs {where} ORDER BY created_at DESC LIMIT $limit START $offset;"
+    results = await reg.client.query(query, params)
+
+    count_query = f"SELECT count() FROM kos_logs {where} GROUP ALL;"
+    count_result = await reg.client.query(count_query, params)
+    total = count_result[0].get("count", 0) if count_result else 0
+
+    return {"data": results, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/audit-log")
+async def get_audit_log(
+    limit: int = 100,
+    offset: int = 0,
+    table_name: str | None = None,
+    action: str | None = None,
+    current_user: CurrentUser = Depends(),
+    reg: TenantRegistry = Depends(get_tenant_registry),
+):
+    """Query the audit_log table (DB-level event triggers)."""
+    where_clauses = []
+    params: dict = {"limit": limit, "offset": offset}
+
+    if table_name:
+        where_clauses.append("table_name = $table_name")
+        params["table_name"] = table_name
+    if action:
+        where_clauses.append("action = $action")
+        params["action"] = action
+
+    where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    query = f"SELECT * FROM audit_log {where} ORDER BY created_at DESC LIMIT $limit START $offset;"
+    results = await reg.client.query(query, params)
+
+    count_query = f"SELECT count() FROM audit_log {where} GROUP ALL;"
+    count_result = await reg.client.query(count_query, params)
+    total = count_result[0].get("count", 0) if count_result else 0
+
+    return {"data": results, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/logs/stats")
+async def get_log_stats(
+    current_user: CurrentUser = Depends(),
+    reg: TenantRegistry = Depends(get_tenant_registry),
+):
+    """Aggregate stats for the logging dashboard."""
+    kos_count = await reg.client.query("SELECT count() FROM kos_logs GROUP ALL;")
+    audit_count = await reg.client.query("SELECT count() FROM audit_log GROUP ALL;")
+    items_count = await reg.client.query("SELECT count() FROM items GROUP ALL;")
+    passages_count = await reg.client.query("SELECT count() FROM passages GROUP ALL;")
+    entities_count = await reg.client.query("SELECT count() FROM entities GROUP ALL;")
+
+    agents = await reg.client.query("SELECT agent, count() FROM kos_logs GROUP BY agent;")
+    levels = await reg.client.query("SELECT level, count() FROM kos_logs GROUP BY level;")
+    tables = await reg.client.query("SELECT table_name, action, count() FROM audit_log GROUP BY table_name, action;")
+
+    return {
+        "kos_logs_total": kos_count[0].get("count", 0) if kos_count else 0,
+        "audit_log_total": audit_count[0].get("count", 0) if audit_count else 0,
+        "items_total": items_count[0].get("count", 0) if items_count else 0,
+        "passages_total": passages_count[0].get("count", 0) if passages_count else 0,
+        "entities_total": entities_count[0].get("count", 0) if entities_count else 0,
+        "agents": agents,
+        "levels": levels,
+        "audit_by_table": tables,
+    }
+
+
+# --- Ingestion ---
+
 class IngestChatRequest(BaseModel):
     user_message: str
     assistant_message: str
