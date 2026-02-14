@@ -16,7 +16,9 @@ export default function PlaygroundPage() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread />
+      <div className="h-full w-full">
+        <Thread />
+      </div>
     </AssistantRuntimeProvider>
   );
 }
