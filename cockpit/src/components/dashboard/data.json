@@ -1,0 +1,182 @@
+[
+  {
+    "id": 1,
+    "header": "Research Notes - Neural Architecture",
+    "type": "Document",
+    "status": "Done",
+    "target": "128",
+    "limit": "256",
+    "reviewer": "MetaKernel"
+  },
+  {
+    "id": 2,
+    "header": "Meeting Transcript - Q4 Planning",
+    "type": "Conversation",
+    "status": "Done",
+    "target": "64",
+    "limit": "128",
+    "reviewer": "Assign reviewer"
+  },
+  {
+    "id": 3,
+    "header": "API Design Specification v2",
+    "type": "Document",
+    "status": "In Progress",
+    "target": "256",
+    "limit": "512",
+    "reviewer": "ChunkAgent"
+  },
+  {
+    "id": 4,
+    "header": "Knowledge Graph - Entity Relations",
+    "type": "Graph",
+    "status": "Done",
+    "target": "512",
+    "limit": "1024",
+    "reviewer": "EntityExtract"
+  },
+  {
+    "id": 5,
+    "header": "Contradiction Report - User Prefs",
+    "type": "Claim",
+    "status": "In Progress",
+    "target": "32",
+    "limit": "64",
+    "reviewer": "ClaimExtract"
+  },
+  {
+    "id": 6,
+    "header": "Web Scrape - ML Papers 2026",
+    "type": "WebContent",
+    "status": "Done",
+    "target": "96",
+    "limit": "192",
+    "reviewer": "EmbedAgent"
+  },
+  {
+    "id": 7,
+    "header": "Personal Journal - Week 6",
+    "type": "Note",
+    "status": "In Progress",
+    "target": "48",
+    "limit": "96",
+    "reviewer": "Assign reviewer"
+  },
+  {
+    "id": 8,
+    "header": "Entity Dossier - OpenAI",
+    "type": "Artifact",
+    "status": "Done",
+    "target": "160",
+    "limit": "320",
+    "reviewer": "MetaKernel"
+  },
+  {
+    "id": 9,
+    "header": "Strategy Evaluation - Chunking v3",
+    "type": "ACP",
+    "status": "In Progress",
+    "target": "24",
+    "limit": "48",
+    "reviewer": "RestructuringExecutor"
+  },
+  {
+    "id": 10,
+    "header": "Timeline - Project Milestones",
+    "type": "Artifact",
+    "status": "Done",
+    "target": "80",
+    "limit": "160",
+    "reviewer": "MetaKernel"
+  },
+  {
+    "id": 11,
+    "header": "Slack Export - Engineering Channel",
+    "type": "Conversation",
+    "status": "Done",
+    "target": "200",
+    "limit": "400",
+    "reviewer": "ChunkAgent"
+  },
+  {
+    "id": 12,
+    "header": "Embedding Strategy - domain-specific",
+    "type": "ACP",
+    "status": "In Progress",
+    "target": "16",
+    "limit": "32",
+    "reviewer": "Assign reviewer"
+  },
+  {
+    "id": 13,
+    "header": "Claim Conflict - Deployment Dates",
+    "type": "Claim",
+    "status": "Done",
+    "target": "8",
+    "limit": "16",
+    "reviewer": "ClaimExtract"
+  },
+  {
+    "id": 14,
+    "header": "PDF Import - System Design Book",
+    "type": "Document",
+    "status": "In Progress",
+    "target": "320",
+    "limit": "640",
+    "reviewer": "ChunkAgent"
+  },
+  {
+    "id": 15,
+    "header": "Graph Restructure Proposal #7",
+    "type": "ACP",
+    "status": "In Progress",
+    "target": "12",
+    "limit": "24",
+    "reviewer": "RestructuringExecutor"
+  },
+  {
+    "id": 16,
+    "header": "Evidence Trail - Funding Claims",
+    "type": "Claim",
+    "status": "Done",
+    "target": "44",
+    "limit": "88",
+    "reviewer": "MetaKernel"
+  },
+  {
+    "id": 17,
+    "header": "Browser History - Research Session",
+    "type": "WebContent",
+    "status": "Done",
+    "target": "150",
+    "limit": "300",
+    "reviewer": "EmbedAgent"
+  },
+  {
+    "id": 18,
+    "header": "Maintenance Cycle - Stale Claims",
+    "type": "Maintenance",
+    "status": "In Progress",
+    "target": "60",
+    "limit": "120",
+    "reviewer": "MetaKernel"
+  },
+  {
+    "id": 19,
+    "header": "Voice Memo Transcription - Ideas",
+    "type": "Note",
+    "status": "Done",
+    "target": "36",
+    "limit": "72",
+    "reviewer": "ChunkAgent"
+  },
+  {
+    "id": 20,
+    "header": "Outcome Events - Strategy Perf",
+    "type": "ACP",
+    "status": "Done",
+    "target": "100",
+    "limit": "200",
+    "reviewer": "RestructuringExecutor"
+  }
+]

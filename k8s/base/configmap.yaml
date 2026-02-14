@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cogmem-config
+  namespace: cogmem
+data:
+  # Project configuration
+  PROJECT_NAME: "CogMem"
+  
+  # Domain configuration
+  DOMAIN: "cogmem.ai"
+  FRONTEND_HOST: "https://dashboard.cogmem.ai"
+  ENVIRONMENT: "production"
+  
+  # CORS origins (comma-separated)
+  BACKEND_CORS_ORIGINS: "https://dashboard.cogmem.ai,https://api.cogmem.ai,https://cogmem.ai,https://www.cogmem.ai"
+  CLOUD_COCKPIT_URL: "https://dashboard.cogmem.ai"
+  
+  # Database hosts
+  POSTGRES_SERVER: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "app"
+  POSTGRES_USER: "postgres"
+  
+  NEO4J_SERVER: "neo4j-service"
+  NEO4J_PORT: "7687"
+  
+  QDRANT_SERVER: "qdrant-service"
+  QDRANT_PORT: "6333"
+  
+  SURREAL_SERVER: "surrealdb-service"
+  SURREAL_PORT: "8080"
+  SURREAL_USER: "admin"
+  
+  # SurrealDB tenant provisioning (cloud signup)
+  SURREALDB_URL: "ws://surrealdb-service:8080"
+  SURREALDB_NAMESPACE: "cogmem"
+  SURREALDB_USER: "admin"
+  
+  # Email configuration (optional)
+  FIRST_SUPERUSER: "admin@cogmem.ai"
+  SMTP_HOST: ""
+  SMTP_USER: ""
+  EMAILS_FROM_EMAIL: "noreply@example.com"
+  
+  # Stack name
+  STACK_NAME: "cogmem"

@@ -1,0 +1,126 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cogmem-ingress
+  namespace: cogmem
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://surrealist.app, https://surrealdb.cogmem.ai"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization,Accept,Origin,Surreal-NS,Surreal-DB"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/websocket-services: "surrealdb-service,neo4j-service"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.cogmem.ai
+    - dashboard.cogmem.ai
+    - neo4j.cogmem.ai
+    - qdrant.cogmem.ai
+    - surrealdb.cogmem.ai
+    - adminer.cogmem.ai
+    - opensearch.cogmem.ai
+    - opensearch-dashboards.cogmem.ai
+    secretName: cogmem-tls
+  rules:
+  # Backend API
+  - host: api.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 8000
+  
+  # Cloud Cockpit Dashboard
+  - host: dashboard.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: cockpit-service
+            port:
+              number: 3000
+  
+  # Neo4j Browser
+  - host: neo4j.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: neo4j-service
+            port:
+              number: 7474
+  
+  # Qdrant Dashboard
+  - host: qdrant.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: qdrant-service
+            port:
+              number: 6333
+  
+  # SurrealDB
+  - host: surrealdb.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: surrealdb-service
+            port:
+              number: 8080
+  
+  # Adminer
+  - host: adminer.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: adminer-service
+            port:
+              number: 8080
+  
+  # OpenSearch
+  - host: opensearch.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opensearch-service
+            port:
+              number: 9200
+  
+  # OpenSearch Dashboards
+  - host: opensearch-dashboards.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opensearch-dashboards-service
+            port:
+              number: 5601

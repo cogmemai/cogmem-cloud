@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prestart-migration
+  namespace: cogmem
+spec:
+  template:
+    metadata:
+      labels:
+        app: prestart
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: prestart
+        image: ghcr.io/cogmemai/cogmem-backend:latest
+        command: ["bash", "/app/backend/scripts/prestart.sh"]
+        envFrom:
+        - configMapRef:
+            name: cogmem-config
+        env:
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: secret-key
+        - name: FIRST_SUPERUSER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: first-superuser-password
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: postgres-password
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: neo4j-password
+        - name: QDRANT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: qdrant-api-key
+        - name: SURREAL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: surreal-password
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: smtp-password
+              optional: true
+        - name: SENTRY_DSN
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: sentry-dsn
+              optional: true
+  backoffLimit: 3

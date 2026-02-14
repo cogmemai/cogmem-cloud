@@ -1,0 +1,23 @@
+[Unit]
+Description=CogMem Full Stack Application
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/cogmem
+ExecStart=/usr/bin/docker compose -f compose.yml -f compose.traefik.yml up -d
+ExecStop=/usr/bin/docker compose -f compose.yml -f compose.traefik.yml down
+Restart=on-failure
+RestartSec=10s
+
+# Run as jkane user
+User=jkane
+Group=jkane
+
+# Environment - load from .env file
+EnvironmentFile=/opt/cogmem/.env
+
+[Install]
+WantedBy=multi-user.target

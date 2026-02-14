@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: surrealdb
+  namespace: cogmem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: surrealdb
+  template:
+    metadata:
+      labels:
+        app: surrealdb
+    spec:
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      containers:
+      - name: surrealdb
+        image: surrealdb/surrealdb:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        args:
+        - "start"
+        - "--bind"
+        - "0.0.0.0:8080"
+        - "--user"
+        - "admin"
+        - "--pass"
+        - "REDACTED"
+        - "--allow-all"
+        - "surrealkv:///surrealdb/cogmem_production.db"
+        env:
+        - name: SURREAL_USER
+          value: "admin"
+        - name: SURREAL_PASS
+          value: "REDACTED"
+        - name: SURREAL_CAPS_DENY
+          value: "http"
+        volumeMounts:
+        - name: surrealdb-storage
+          mountPath: /surrealdb
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: surrealdb-storage
+        persistentVolumeClaim:
+          claimName: surrealdb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: surrealdb-service
+  namespace: cogmem
+spec:
+  selector:
+    app: surrealdb
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = ["api"]
+
+[tool.uv.sources]
+cogmem-kos = { path = "../cogmem-kos", editable = true }
