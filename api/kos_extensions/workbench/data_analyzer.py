@@ -22,7 +22,7 @@ from typing import Any
 # Allow very large CSV fields (e.g. full document text in a single cell)
 csv.field_size_limit(sys.maxsize)
 
-from kos.cloud.workbench.models import DataProfile
+from kos_extensions.workbench.models import DataProfile
 from kos.core.models.ids import KosId
 from kos.core.models.strategy import (
     ChunkingMode,

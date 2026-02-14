@@ -64,28 +64,28 @@ class CloudProviderRegistry:
     @property
     def admin_store(self) -> AdminStore:
         if self._admin_store is None:
-            from kos.cloud.stores.admin_store import SurrealDBAdminStore
+            from kos_extensions.stores.admin_store import SurrealDBAdminStore
             self._admin_store = SurrealDBAdminStore(self._client)
         return self._admin_store
 
     @property
     def strategy_store(self) -> StrategyStore:
         if self._strategy_store is None:
-            from kos.cloud.stores.strategy_store import SurrealDBStrategyStore
+            from kos_extensions.stores.strategy_store import SurrealDBStrategyStore
             self._strategy_store = SurrealDBStrategyStore(self._client)
         return self._strategy_store
 
     @property
     def outcome_store(self) -> OutcomeStore:
         if self._outcome_store is None:
-            from kos.cloud.stores.outcome_store import SurrealDBOutcomeStore
+            from kos_extensions.stores.outcome_store import SurrealDBOutcomeStore
             self._outcome_store = SurrealDBOutcomeStore(self._client)
         return self._outcome_store
 
     @property
     def proposal_store(self) -> ProposalStore:
         if self._proposal_store is None:
-            from kos.cloud.stores.proposal_store import SurrealDBProposalStore
+            from kos_extensions.stores.proposal_store import SurrealDBProposalStore
             self._proposal_store = SurrealDBProposalStore(self._client)
         return self._proposal_store
 

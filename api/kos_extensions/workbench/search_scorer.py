@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from kos.cloud.workbench.models import SearchTestResult
+from kos_extensions.workbench.models import SearchTestResult
 from kos.core.contracts.stores.retrieval.text_search import TextSearchProvider
 from kos.core.contracts.stores.retrieval.vector_search import VectorSearchProvider
 from kos.core.contracts.stores.outcome_store import OutcomeStore

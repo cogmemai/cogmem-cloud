@@ -19,15 +19,15 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from kos.cloud.workbench.data_analyzer import DataAnalyzer
-from kos.cloud.workbench.models import (
+from kos_extensions.workbench.data_analyzer import DataAnalyzer
+from kos_extensions.workbench.models import (
     CycleResult,
     CycleStatus,
     DataProfile,
     Experiment,
     ExperimentStatus,
 )
-from kos.cloud.workbench.search_scorer import SearchScorer
+from kos_extensions.workbench.search_scorer import SearchScorer
 from kos.core.acp.meta_kernel import MetaKernel
 from kos.core.contracts.stores.object_store import ObjectStore
 from kos.core.contracts.stores.outcome_store import OutcomeStore
