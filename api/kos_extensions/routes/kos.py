@@ -215,14 +215,14 @@ class LogsQuery(BaseModel):
 
 @router.get("/logs")
 async def get_kos_logs(
+    current_user: CurrentUser,
+    reg: TenantRegistry = Depends(get_tenant_registry),
     limit: int = 100,
     offset: int = 0,
     level: str | None = None,
     agent: str | None = None,
     event_type: str | None = None,
     correlation_id: str | None = None,
-    current_user: CurrentUser = Depends(),
-    reg: TenantRegistry = Depends(get_tenant_registry),
 ):
     """Query the kos_logs table (application-level pipeline logs)."""
     where_clauses = []
@@ -254,12 +254,12 @@ async def get_kos_logs(
 
 @router.get("/audit-log")
 async def get_audit_log(
+    current_user: CurrentUser,
+    reg: TenantRegistry = Depends(get_tenant_registry),
     limit: int = 100,
     offset: int = 0,
     table_name: str | None = None,
     action: str | None = None,
-    current_user: CurrentUser = Depends(),
-    reg: TenantRegistry = Depends(get_tenant_registry),
 ):
     """Query the audit_log table (DB-level event triggers)."""
     where_clauses = []
@@ -285,7 +285,7 @@ async def get_audit_log(
 
 @router.get("/logs/stats")
 async def get_log_stats(
-    current_user: CurrentUser = Depends(),
+    current_user: CurrentUser,
     reg: TenantRegistry = Depends(get_tenant_registry),
 ):
     """Aggregate stats for the logging dashboard."""
