@@ -51,6 +51,11 @@ DEFINE TABLE IF NOT EXISTS outbox_events SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS idx_outbox_event_id ON outbox_events FIELDS event_id UNIQUE;
 DEFINE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events FIELDS status, event_type;
 
+-- Document metadata
+DEFINE TABLE IF NOT EXISTS documents SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS idx_documents_doc_id ON documents FIELDS doc_id UNIQUE;
+DEFINE INDEX IF NOT EXISTS idx_documents_tenant ON documents FIELDS tenant_id;
+
 -- Graph edge tables
 DEFINE TABLE IF NOT EXISTS mentions SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS has_passage SCHEMALESS;

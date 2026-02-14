@@ -5,9 +5,10 @@ and overrides their dependency injection to use per-tenant SurrealDB
 connections. This ensures each user's data is fully isolated.
 """
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
@@ -349,3 +350,142 @@ async def ingest_chat(
         "user_item_id": user_item_id,
         "assistant_item_id": asst_item_id,
     }
+
+
+# --- Document Ingestion ---
+
+@router.post("/documents/upload")
+async def upload_document(
+    current_user: CurrentUser,
+    reg: TenantRegistry = Depends(get_tenant_registry),
+    file: UploadFile = File(...),
+):
+    """Upload and ingest a document (PDF, DOCX, TXT) into the KOS pipeline.
+
+    Parses the document, extracts text, then runs the full KOS ingest
+    pipeline (ChunkAgent + EntityExtractAgent) on the content.
+    """
+    from kos_extensions.document_parser import parse_document
+    from kos_extensions.ingest import ingest_content
+    from kos_extensions.kos_logging import KosLogger
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # 10 MB limit
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+
+    kl = KosLogger(reg.client)
+
+    await kl.log("document_ingest", "upload_start", f"Uploading document: {file.filename}",
+                 metadata={"filename": file.filename, "size_bytes": len(file_bytes),
+                           "content_type": file.content_type})
+
+    try:
+        parsed = parse_document(file_bytes, file.filename, file.content_type or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to parse document: %s", file.filename)
+        raise HTTPException(status_code=422, detail=f"Failed to parse document: {e}")
+
+    await kl.log("document_ingest", "parse_complete",
+                 f"Parsed {parsed.title}: {parsed.word_count} words, {parsed.page_count} pages",
+                 metadata={"title": parsed.title, "word_count": parsed.word_count,
+                           "page_count": parsed.page_count, "text_len": len(parsed.text)})
+
+    if not parsed.text.strip():
+        raise HTTPException(status_code=422, detail="No text content could be extracted from the document")
+
+    # Store document metadata in SurrealDB
+    import uuid
+    from datetime import datetime
+    doc_id = str(uuid.uuid4())
+    await reg.client.create("documents", {
+        "doc_id": doc_id,
+        "filename": file.filename,
+        "content_type": parsed.content_type,
+        "page_count": parsed.page_count,
+        "word_count": parsed.word_count,
+        "text_length": len(parsed.text),
+        "status": "processing",
+        "tenant_id": current_user.tenant_id,
+        "user_id": str(current_user.id),
+        "created_at": datetime.utcnow().isoformat(),
+    })
+
+    # Run KOS ingestion pipeline on the extracted text
+    try:
+        item_id = await ingest_content(
+            registry=reg,
+            tenant_id=current_user.tenant_id,
+            user_id=str(current_user.id),
+            title=parsed.title,
+            content=parsed.text,
+            source="document",
+            content_type=parsed.content_type,
+            metadata={
+                "doc_id": doc_id,
+                "filename": file.filename,
+                "page_count": parsed.page_count,
+                "word_count": parsed.word_count,
+            },
+            kos_logger=kl,
+        )
+
+        # Update document status
+        await reg.client.query(
+            "UPDATE documents SET status = $status, item_id = $item_id WHERE doc_id = $doc_id;",
+            {"status": "ingested", "item_id": item_id, "doc_id": doc_id},
+        )
+
+        await kl.log("document_ingest", "pipeline_complete",
+                     f"Document {parsed.title} ingested as item {item_id}",
+                     item_id=item_id,
+                     metadata={"doc_id": doc_id, "filename": file.filename})
+
+    except Exception as e:
+        logger.exception("Document ingestion failed: %s", file.filename)
+        await reg.client.query(
+            "UPDATE documents SET status = $status, error = $error WHERE doc_id = $doc_id;",
+            {"status": "failed", "error": str(e), "doc_id": doc_id},
+        )
+        await kl.log("document_ingest", "pipeline_error",
+                     f"Document ingestion failed: {e}", level="ERROR",
+                     metadata={"doc_id": doc_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+
+    return {
+        "status": "ingested",
+        "doc_id": doc_id,
+        "item_id": item_id,
+        "filename": file.filename,
+        "word_count": parsed.word_count,
+        "page_count": parsed.page_count,
+    }
+
+
+@router.get("/documents")
+async def list_documents(
+    current_user: CurrentUser,
+    reg: TenantRegistry = Depends(get_tenant_registry),
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List uploaded documents for the current tenant."""
+    results = await reg.client.query(
+        "SELECT * FROM documents WHERE tenant_id = $tid ORDER BY created_at DESC LIMIT $limit START $offset;",
+        {"tid": current_user.tenant_id, "limit": limit, "offset": offset},
+    )
+    count_result = await reg.client.query(
+        "SELECT count() FROM documents WHERE tenant_id = $tid GROUP ALL;",
+        {"tid": current_user.tenant_id},
+    )
+    total = count_result[0].get("count", 0) if count_result else 0
+
+    return {"data": results, "total": total}

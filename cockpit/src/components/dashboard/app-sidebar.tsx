@@ -13,6 +13,7 @@ import {
   IconSearch,
   IconSettings,
   IconTimeline,
+  IconUpload,
   IconUsers,
 } from "@tabler/icons-react"
 
@@ -86,6 +87,11 @@ const data = {
     },
   ],
   documents: [
+    {
+      name: "Document Ingestion",
+      url: "/documents",
+      icon: IconUpload,
+    },
     {
       name: "Knowledge Graph",
       url: "#",
