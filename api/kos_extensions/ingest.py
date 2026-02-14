@@ -3,6 +3,9 @@
 Runs the ChunkAgent and EntityExtractAgent inline (no outbox polling)
 to process content into searchable knowledge within a tenant's SurrealDB.
 
+Every step is logged to the ``kos_logs`` table via :class:`KosLogger` so
+the full pipeline execution is observable in Surrealist / the cockpit.
+
 Usage:
     from kos_extensions.ingest import ingest_content
 
@@ -32,6 +35,7 @@ from kos.agents.ingest.chunk_agent import ChunkAgent
 from kos.agents.extract.entity_extract_agent import EntityExtractAgent
 
 from kos_extensions.registry import CloudProviderRegistry
+from kos_extensions.kos_logging import KosLogger
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,7 @@ async def ingest_content(
     source: str = "chat",
     content_type: str = "text/plain",
     metadata: dict | None = None,
+    kos_logger: KosLogger | None = None,
 ) -> str:
     """Ingest content into the KOS pipeline.
 
@@ -58,6 +63,7 @@ async def ingest_content(
         return ""
 
     item_id = KosId(str(uuid.uuid4()))
+    kl = kos_logger or KosLogger(registry.client)
 
     try:
         source_enum = Source(source)
@@ -78,7 +84,9 @@ async def ingest_content(
     )
 
     # Step 1: Save the item
-    await registry.object_store.save_item(item)
+    async with kl.timed("cloud_ingest", "save_item", f"Saving item {item_id}", item_id=str(item_id),
+                         metadata={"title": title, "content_len": len(content), "source": source}):
+        await registry.object_store.save_item(item)
     logger.info("Ingested item %s for tenant %s", item_id, tenant_id)
 
     # Step 2: Run ChunkAgent
@@ -96,7 +104,16 @@ async def ingest_content(
         source_agent="cloud_ingest",
     )
 
-    chunk_events = await chunk_agent.process_event(item_event)
+    async with kl.timed("chunk_agent", "chunk_item", f"Chunking item {item_id}", item_id=str(item_id)):
+        chunk_events = await chunk_agent.process_event(item_event)
+
+    passage_ids: list[str] = []
+    for evt in chunk_events:
+        passage_ids.extend(evt.payload.get("passage_ids", []))
+
+    await kl.log("chunk_agent", "chunk_result", f"Produced {len(chunk_events)} events, {len(passage_ids)} passages",
+                 item_id=str(item_id), passage_ids=passage_ids,
+                 metadata={"event_count": len(chunk_events), "passage_count": len(passage_ids)})
     logger.info("ChunkAgent produced %d events for item %s", len(chunk_events), item_id)
 
     # Step 3: Run EntityExtractAgent on each PASSAGES_CREATED event
@@ -107,13 +124,21 @@ async def ingest_content(
         use_llm=False,  # Use regex extraction (fast, no API calls)
     )
 
+    all_entity_ids: list[str] = []
     for event in chunk_events:
         if event.event_type == EventType.PASSAGES_CREATED:
-            entity_events = await entity_agent.process_event(event)
-            logger.info(
-                "EntityExtractAgent produced %d events from passages",
-                len(entity_events),
-            )
+            async with kl.timed("entity_extract_agent", "extract_entities",
+                                f"Extracting entities for item {item_id}", item_id=str(item_id)):
+                entity_events = await entity_agent.process_event(event)
+
+            for e_evt in entity_events:
+                all_entity_ids.extend(e_evt.payload.get("entity_ids", []))
+
+            await kl.log("entity_extract_agent", "extract_result",
+                         f"Extracted {len(entity_events)} events, {len(all_entity_ids)} entities",
+                         item_id=str(item_id), entity_ids=all_entity_ids,
+                         metadata={"event_count": len(entity_events), "entity_count": len(all_entity_ids)})
+            logger.info("EntityExtractAgent produced %d events from passages", len(entity_events))
 
     return str(item_id)
 
@@ -129,6 +154,13 @@ async def ingest_chat_turn(
 
     Returns (user_item_id, assistant_item_id).
     """
+    kl = KosLogger(registry.client)
+
+    await kl.log("cloud_ingest", "pipeline_start", "Starting chat turn ingestion",
+                 metadata={"tenant_id": tenant_id, "user_id": user_id,
+                           "user_msg_len": len(user_message),
+                           "assistant_msg_len": len(assistant_message)})
+
     user_item_id = await ingest_content(
         registry=registry,
         tenant_id=tenant_id,
@@ -138,6 +170,7 @@ async def ingest_chat_turn(
         source="chat",
         content_type="text/plain",
         metadata={"role": "user"},
+        kos_logger=kl,
     )
 
     assistant_item_id = await ingest_content(
@@ -149,6 +182,10 @@ async def ingest_chat_turn(
         source="chat",
         content_type="text/plain",
         metadata={"role": "assistant"},
+        kos_logger=kl,
     )
+
+    await kl.log("cloud_ingest", "pipeline_end", "Chat turn ingestion complete",
+                 metadata={"user_item_id": user_item_id, "assistant_item_id": assistant_item_id})
 
     return user_item_id, assistant_item_id

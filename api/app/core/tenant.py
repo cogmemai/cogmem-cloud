@@ -66,6 +66,50 @@ DEFINE INDEX IF NOT EXISTS idx_outcomes_tenant ON outcome_events FIELDS tenant_i
 
 DEFINE TABLE IF NOT EXISTS strategy_proposals SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS idx_proposals_kos_id ON strategy_proposals FIELDS kos_id UNIQUE;
+
+-- Application-level pipeline logs (written explicitly by ingest code)
+DEFINE TABLE IF NOT EXISTS kos_logs SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS idx_kos_logs_ts ON kos_logs FIELDS created_at;
+DEFINE INDEX IF NOT EXISTS idx_kos_logs_agent ON kos_logs FIELDS agent;
+DEFINE INDEX IF NOT EXISTS idx_kos_logs_level ON kos_logs FIELDS level;
+DEFINE INDEX IF NOT EXISTS idx_kos_logs_correlation ON kos_logs FIELDS correlation_id;
+
+-- DB-level audit trail (populated by DEFINE EVENT triggers)
+DEFINE TABLE IF NOT EXISTS audit_log SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log FIELDS created_at;
+DEFINE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log FIELDS table_name;
+DEFINE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log FIELDS action;
+
+-- Audit events: auto-log every CREATE/UPDATE/DELETE on core tables
+DEFINE EVENT IF NOT EXISTS audit_items_create ON items WHEN $event = "CREATE" THEN {
+    CREATE audit_log SET table_name = "items", action = "CREATE", record_id = string::concat("items:", <string> $after.id), data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_items_update ON items WHEN $event = "UPDATE" THEN {
+    CREATE audit_log SET table_name = "items", action = "UPDATE", record_id = string::concat("items:", <string> $after.id), data_before = $before, data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_items_delete ON items WHEN $event = "DELETE" THEN {
+    CREATE audit_log SET table_name = "items", action = "DELETE", record_id = string::concat("items:", <string> $before.id), data_before = $before, created_at = time::now();
+};
+
+DEFINE EVENT IF NOT EXISTS audit_passages_create ON passages WHEN $event = "CREATE" THEN {
+    CREATE audit_log SET table_name = "passages", action = "CREATE", record_id = string::concat("passages:", <string> $after.id), data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_passages_update ON passages WHEN $event = "UPDATE" THEN {
+    CREATE audit_log SET table_name = "passages", action = "UPDATE", record_id = string::concat("passages:", <string> $after.id), data_before = $before, data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_passages_delete ON passages WHEN $event = "DELETE" THEN {
+    CREATE audit_log SET table_name = "passages", action = "DELETE", record_id = string::concat("passages:", <string> $before.id), data_before = $before, created_at = time::now();
+};
+
+DEFINE EVENT IF NOT EXISTS audit_entities_create ON entities WHEN $event = "CREATE" THEN {
+    CREATE audit_log SET table_name = "entities", action = "CREATE", record_id = string::concat("entities:", <string> $after.id), data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_entities_update ON entities WHEN $event = "UPDATE" THEN {
+    CREATE audit_log SET table_name = "entities", action = "UPDATE", record_id = string::concat("entities:", <string> $after.id), data_before = $before, data_after = $after, created_at = time::now();
+};
+DEFINE EVENT IF NOT EXISTS audit_entities_delete ON entities WHEN $event = "DELETE" THEN {
+    CREATE audit_log SET table_name = "entities", action = "DELETE", record_id = string::concat("entities:", <string> $before.id), data_before = $before, created_at = time::now();
+};
 """
 
 
