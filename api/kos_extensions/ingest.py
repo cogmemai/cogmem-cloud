@@ -1,7 +1,9 @@
 """KOS ingestion pipeline for the cloud offering.
 
-Runs the ChunkAgent and EntityExtractAgent inline (no outbox polling)
-to process content into searchable knowledge within a tenant's SurrealDB.
+Performs chunking and entity extraction **inline** — we already have the
+item content in memory so there is no need to round-trip through
+``object_store.get_item()`` (which can fail due to SurrealDB SDK param
+binding quirks).
 
 Every step is logged to the ``kos_logs`` table via :class:`KosLogger` so
 the full pipeline execution is observable in Surrealist / the cockpit.
@@ -23,22 +25,96 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime
 
-from kos.core.events.event_types import EventType
-from kos.core.events.envelope import EventEnvelope
 from kos.core.models.ids import KosId, TenantId, UserId, Source
 from kos.core.models.item import Item
-from kos.core.contracts.stores.outbox_store import OutboxEvent
-from kos.agents.ingest.chunk_agent import ChunkAgent
-from kos.agents.extract.entity_extract_agent import EntityExtractAgent
+from kos.core.models.passage import Passage, TextSpan
+from kos.core.models.entity import Entity, EntityType
 
 from kos_extensions.registry import CloudProviderRegistry
 from kos_extensions.kos_logging import KosLogger
 
 logger = logging.getLogger(__name__)
 
+# ── Inline chunking ──────────────────────────────────────────────────────────
+
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
+
+
+def _chunk_text(text: str) -> list[tuple[str, int, int]]:
+    """Split *text* into overlapping chunks.
+
+    Always produces at least one chunk for non-empty text.
+    Returns list of ``(chunk_text, start_offset, end_offset)``.
+    """
+    if not text or not text.strip():
+        return []
+
+    # Short text → single chunk
+    if len(text) <= CHUNK_SIZE:
+        return [(text.strip(), 0, len(text))]
+
+    chunks: list[tuple[str, int, int]] = []
+    start = 0
+    while start < len(text):
+        end = min(start + CHUNK_SIZE, len(text))
+        # Try to break at a natural boundary
+        if end < len(text):
+            for sep in ["\n\n", "\n", ". ", " "]:
+                last_sep = text.rfind(sep, start, end)
+                if last_sep > start:
+                    end = last_sep + len(sep)
+                    break
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append((chunk, start, end))
+        if end >= len(text):
+            break
+        start = max(end - CHUNK_OVERLAP, start + 1)
+    return chunks
+
+
+# ── Inline entity extraction (regex) ─────────────────────────────────────────
+
+ENTITY_PATTERNS: dict[EntityType, list[str]] = {
+    EntityType.PERSON: [
+        r"\b(?:Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+",
+        r"\b[A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?(?=\s+(?:said|says|told|wrote|is|was|has|had))",
+    ],
+    EntityType.ORGANIZATION: [
+        r"\b[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*\s+(?:Inc\.|Corp\.|LLC|Ltd\.|Company|Corporation|Foundation|Institute|University|College)\b",
+        r"\b(?:The\s+)?[A-Z][A-Za-z]+\s+(?:Group|Team|Department|Division|Board)\b",
+    ],
+    EntityType.LOCATION: [
+        r"\b(?:New\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s+[A-Z]{2}\b",
+        r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:City|County|State|Country|Province|Region)\b",
+    ],
+    EntityType.DATE: [
+        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b",
+        r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+    ],
+}
+
+
+def _extract_entities_regex(text: str) -> list[tuple[str, EntityType]]:
+    """Extract named entities from *text* using regex patterns."""
+    entities: list[tuple[str, EntityType]] = []
+    seen: set[str] = set()
+    for entity_type, patterns in ENTITY_PATTERNS.items():
+        for pattern in patterns:
+            for match in re.findall(pattern, text):
+                name = match.strip()
+                if name and name not in seen and len(name) > 2:
+                    seen.add(name)
+                    entities.append((name, entity_type))
+    return entities
+
+
+# ── Main pipeline ─────────────────────────────────────────────────────────────
 
 async def ingest_content(
     registry: CloudProviderRegistry,
@@ -54,8 +130,9 @@ async def ingest_content(
     """Ingest content into the KOS pipeline.
 
     1. Creates an Item in the tenant's SurrealDB
-    2. Runs ChunkAgent to split into Passages
-    3. Runs EntityExtractAgent to extract entities from passages
+    2. Chunks the text inline into Passages (no get_item round-trip)
+    3. Extracts entities from each passage via regex
+    4. Creates graph nodes + MENTIONS edges
 
     Returns the item's kos_id.
     """
@@ -64,6 +141,8 @@ async def ingest_content(
 
     item_id = KosId(str(uuid.uuid4()))
     kl = kos_logger or KosLogger(registry.client)
+    tid = TenantId(tenant_id)
+    uid = UserId(user_id)
 
     try:
         source_enum = Source(source)
@@ -72,8 +151,8 @@ async def ingest_content(
 
     item = Item(
         kos_id=item_id,
-        tenant_id=TenantId(tenant_id),
-        user_id=UserId(user_id),
+        tenant_id=tid,
+        user_id=uid,
         source=source_enum,
         title=title,
         content_text=content,
@@ -83,62 +162,95 @@ async def ingest_content(
         metadata=metadata or {},
     )
 
-    # Step 1: Save the item
+    # ── Step 1: Save the item ────────────────────────────────────────────
     async with kl.timed("cloud_ingest", "save_item", f"Saving item {item_id}", item_id=str(item_id),
                          metadata={"title": title, "content_len": len(content), "source": source}):
         await registry.object_store.save_item(item)
     logger.info("Ingested item %s for tenant %s", item_id, tenant_id)
 
-    # Step 2: Run ChunkAgent
-    chunk_agent = ChunkAgent(
-        object_store=registry.object_store,
-        outbox_store=registry.outbox_store,
-        chunk_size=500,
-        chunk_overlap=50,
-    )
-
-    item_event = EventEnvelope.item_upserted(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        item_id=item_id,
-        source_agent="cloud_ingest",
-    )
-
-    async with kl.timed("chunk_agent", "chunk_item", f"Chunking item {item_id}", item_id=str(item_id)):
-        chunk_events = await chunk_agent.process_event(item_event)
+    # ── Step 2: Chunk text inline ────────────────────────────────────────
+    async with kl.timed("cloud_ingest", "chunk_text", f"Chunking item {item_id}", item_id=str(item_id)):
+        chunks = _chunk_text(content)
 
     passage_ids: list[str] = []
-    for evt in chunk_events:
-        passage_ids.extend(evt.payload.get("passage_ids", []))
+    passages: list[Passage] = []
+    for i, (chunk_text, start, end) in enumerate(chunks):
+        p_id = str(uuid.uuid4())
+        passage = Passage(
+            kos_id=KosId(p_id),
+            item_id=item_id,
+            tenant_id=tid,
+            user_id=uid,
+            text=chunk_text,
+            span=TextSpan(start=start, end=end),
+            sequence=i,
+            metadata={"source_title": title},
+        )
+        await registry.object_store.save_passage(passage)
+        passage_ids.append(p_id)
+        passages.append(passage)
 
-    await kl.log("chunk_agent", "chunk_result", f"Produced {len(chunk_events)} events, {len(passage_ids)} passages",
+    await kl.log("cloud_ingest", "chunk_result",
+                 f"Created {len(passages)} passage(s) for item {item_id}",
                  item_id=str(item_id), passage_ids=passage_ids,
-                 metadata={"event_count": len(chunk_events), "passage_count": len(passage_ids)})
-    logger.info("ChunkAgent produced %d events for item %s", len(chunk_events), item_id)
+                 metadata={"chunk_count": len(chunks), "passage_count": len(passages)})
+    logger.info("Created %d passages for item %s", len(passages), item_id)
 
-    # Step 3: Run EntityExtractAgent on each PASSAGES_CREATED event
-    entity_agent = EntityExtractAgent(
-        object_store=registry.object_store,
-        outbox_store=registry.outbox_store,
-        graph_search=registry.graph_search,
-        use_llm=False,  # Use regex extraction (fast, no API calls)
-    )
-
+    # ── Step 3: Extract entities from each passage ───────────────────────
     all_entity_ids: list[str] = []
-    for event in chunk_events:
-        if event.event_type == EventType.PASSAGES_CREATED:
-            async with kl.timed("entity_extract_agent", "extract_entities",
-                                f"Extracting entities for item {item_id}", item_id=str(item_id)):
-                entity_events = await entity_agent.process_event(event)
+    for passage in passages:
+        async with kl.timed("cloud_ingest", "extract_entities",
+                            f"Extracting entities from passage {passage.kos_id}",
+                            item_id=str(item_id)):
+            extracted = _extract_entities_regex(passage.text)
 
-            for e_evt in entity_events:
-                all_entity_ids.extend(e_evt.payload.get("entity_ids", []))
+        for name, entity_type in extracted:
+            # Check for existing entity with same name
+            existing = await registry.object_store.find_entity_by_name(tid, name)
+            if existing:
+                entity_id = existing.kos_id
+            else:
+                entity_id = KosId(str(uuid.uuid4()))
+                entity = Entity(
+                    kos_id=entity_id,
+                    tenant_id=tid,
+                    user_id=uid,
+                    name=name,
+                    type=entity_type,
+                    aliases=[],
+                    metadata={},
+                )
+                await registry.object_store.save_entity(entity)
 
-            await kl.log("entity_extract_agent", "extract_result",
-                         f"Extracted {len(entity_events)} events, {len(all_entity_ids)} entities",
-                         item_id=str(item_id), entity_ids=all_entity_ids,
-                         metadata={"event_count": len(entity_events), "entity_count": len(all_entity_ids)})
-            logger.info("EntityExtractAgent produced %d events from passages", len(entity_events))
+                # Create graph node
+                try:
+                    await registry.graph_search.create_entity_node(
+                        kos_id=entity_id,
+                        tenant_id=tid,
+                        user_id=uid,
+                        name=name,
+                        entity_type=entity_type.value,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to create entity node: %s", e)
+
+            # Create MENTIONS edge (passage → entity)
+            try:
+                await registry.graph_search.create_mentions_edge(
+                    passage_id=passage.kos_id,
+                    entity_id=entity_id,
+                )
+            except Exception as e:
+                logger.warning("Failed to create mentions edge: %s", e)
+
+            if str(entity_id) not in all_entity_ids:
+                all_entity_ids.append(str(entity_id))
+
+    await kl.log("cloud_ingest", "extract_result",
+                 f"Extracted {len(all_entity_ids)} entity(ies) from {len(passages)} passage(s)",
+                 item_id=str(item_id), entity_ids=all_entity_ids,
+                 metadata={"entity_count": len(all_entity_ids)})
+    logger.info("Extracted %d entities for item %s", len(all_entity_ids), item_id)
 
     return str(item_id)
 
