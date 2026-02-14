@@ -73,6 +73,12 @@ spec:
               name: cogmem-secrets
               key: sentry-dsn
               optional: true
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: openrouter-api-key
+              optional: true
         livenessProbe:
           httpGet:
             path: /api/v1/utils/health-check/

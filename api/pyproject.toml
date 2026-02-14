@@ -29,6 +29,8 @@ dependencies = [
     "cogmem-kos[surrealdb,litellm]",
     # --- Tenant provisioning ---
     "surrealdb>=0.3.0",
+    # --- LLM chat (OpenRouter, OpenAI-compatible) ---
+    "openai>=1.0.0",
 ]
 
 [dependency-groups]
