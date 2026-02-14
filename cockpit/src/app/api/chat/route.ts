@@ -4,7 +4,8 @@ import { cookies } from "next/headers";
 
 export const maxDuration = 30;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.cogmem.ai";
+// Server-side only — use internal K8s service URL in production
+const API_URL = process.env.BACKEND_API_URL || process.env.NEXT_PUBLIC_API_URL || "https://api.cogmem.ai";
 
 const openrouter = createOpenAI({
   apiKey: process.env.OPENROUTER_API_KEY ?? "",
