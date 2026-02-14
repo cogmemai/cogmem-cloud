@@ -557,7 +557,7 @@ dev = [
 [[package]]
 name = "cogmem-kos"
 version = "0.1.0"
-source = { git = "https://github.com/cogmemai/cogmem-kos.git?branch=main#524df761b46c6249ceba00aa44b710a2eec0e3fc" }
+source = { git = "https://github.com/cogmemai/cogmem-kos.git?branch=main#de5f00c923ae8c2c8ce0d955d13c2f3516a94916" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
