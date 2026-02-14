@@ -2,4 +2,4 @@
 members = ["api"]
 
 [tool.uv.sources]
-cogmem-kos = { path = "../cogmem-kos", editable = true }
+cogmem-kos = { git = "https://github.com/cogmemai/cogmem-kos.git", branch = "main" }
