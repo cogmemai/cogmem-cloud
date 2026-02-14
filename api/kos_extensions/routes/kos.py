@@ -5,9 +5,15 @@ and overrides their dependency injection to use per-tenant SurrealDB
 connections. This ensures each user's data is fully isolated.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import logging
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+from app.api.deps import CurrentUser
 from kos_extensions.tenant_deps import get_tenant_registry, TenantRegistry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kos", tags=["kos"])
 
@@ -193,4 +199,44 @@ async def get_entity(entity_id: str, reg: TenantRegistry = Depends(get_tenant_re
         "name": entity.name,
         "entity_type": entity.entity_type,
         "properties": entity.properties,
+    }
+
+
+# --- Ingestion ---
+
+class IngestChatRequest(BaseModel):
+    user_message: str
+    assistant_message: str
+
+
+@router.post("/ingest")
+async def ingest_chat(
+    body: IngestChatRequest,
+    current_user: CurrentUser,
+    reg: TenantRegistry = Depends(get_tenant_registry),
+):
+    """Ingest a chat turn (user + assistant messages) into the KOS pipeline.
+
+    Runs ChunkAgent + EntityExtractAgent inline to create Items, Passages,
+    and Entities in the tenant's SurrealDB database.
+    """
+    from kos_extensions.ingest import ingest_chat_turn
+
+    user_item_id, asst_item_id = await ingest_chat_turn(
+        registry=reg,
+        tenant_id=current_user.tenant_id,
+        user_id=str(current_user.id),
+        user_message=body.user_message,
+        assistant_message=body.assistant_message,
+    )
+
+    logger.info(
+        "KOS ingested chat turn for tenant %s: user=%s assistant=%s",
+        current_user.tenant_id, user_item_id, asst_item_id,
+    )
+
+    return {
+        "status": "ingested",
+        "user_item_id": user_item_id,
+        "assistant_item_id": asst_item_id,
     }
