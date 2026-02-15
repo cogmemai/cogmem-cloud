@@ -216,7 +216,7 @@ async def ingest_content(
                     tenant_id=tid,
                     user_id=uid,
                     name=name,
-                    type=entity_type,
+                    entity_type=entity_type,
                     aliases=[],
                     metadata={},
                 )
