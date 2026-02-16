@@ -27,16 +27,19 @@ spec:
         - "--bind"
         - "0.0.0.0:8080"
         - "--user"
-        - "admin"
+        - "$(SURREAL_USER)"
         - "--pass"
-        - "REDACTED"
+        - "$(SURREAL_PASS)"
         - "--allow-all"
         - "surrealkv:///surrealdb/cogmem_production.db"
         env:
         - name: SURREAL_USER
           value: "admin"
         - name: SURREAL_PASS
-          value: "REDACTED"
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: surreal-password
         - name: SURREAL_CAPS_DENY
           value: "http"
         volumeMounts:

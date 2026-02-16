@@ -22,8 +22,13 @@ spec:
         - containerPort: 7687
           name: bolt
         env:
+        - name: NEO4J_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: neo4j-password
         - name: NEO4J_AUTH
-          value: "neo4j/REDACTED"
+          value: "neo4j/$(NEO4J_PASSWORD)"
         - name: NEO4J_PLUGINS
           value: '["apoc"]'
         - name: NEO4J_server_config_strict__validation_enabled

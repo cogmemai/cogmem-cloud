@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     SURREALDB_URL: str = "ws://surrealdb-service:8080"
     SURREALDB_NAMESPACE: str = "cogmem"
     SURREALDB_USER: str = "admin"
-    SURREALDB_PASSWORD: str = "REDACTED"
+    SURREALDB_PASSWORD: str = ""
 
     # Cloud cockpit URL (for CORS and redirects)
     CLOUD_COCKPIT_URL: str = "https://cloud.cogmem.ai"
