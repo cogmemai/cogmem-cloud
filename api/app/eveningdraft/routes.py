@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/eveningdraft", tags=["eveningdraft"])
 
+# Include the chat sub-router
+from app.eveningdraft.chat import router as chat_router
+
+router.include_router(chat_router)
+
 
 # ── Login ────────────────────────────────────────────────────────────────
 
