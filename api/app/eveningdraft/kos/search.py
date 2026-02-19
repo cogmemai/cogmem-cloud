@@ -8,6 +8,7 @@ synchronous so they can be called from ``run_in_executor``.
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -49,12 +50,14 @@ def search_journal_passages_sync(
     if exclude_content_types is None:
         exclude_content_types = ["chat/assistant", "chat/user"]
 
-    # Filter out stop words to improve search quality
+    # Filter out stop words and strip punctuation to improve search quality
     stop_words = {"what", "is", "my", "the", "a", "an", "of", "to", "in", "for", "and", "or", "it", "do", "does", "how", "who", "where", "when", "why", "are", "was", "were", "be", "been", "has", "have", "had", "i", "me", "you", "your", "we", "they", "them", "this", "that"}
-    words = [w for w in query.strip().lower().split() if w not in stop_words]
+    raw_words = [re.sub(r"[^\w]", "", w) for w in query.strip().lower().split()]
+    raw_words = [w for w in raw_words if w]
+    words = [w for w in raw_words if w not in stop_words]
     if not words:
-        # Fallback: use all words if filtering removed everything
-        words = query.strip().lower().split()
+        # Fallback: use all cleaned words if filtering removed everything
+        words = raw_words
     if not words:
         return ""
 
