@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from openai import OpenAI
@@ -48,6 +49,7 @@ class PassageResult(BaseModel):
     year: int
     era: str
     work_id: str
+    gutenberg_id: str
     sequence: int
     distance: float
 
@@ -79,6 +81,23 @@ class CorpusStats(BaseModel):
     works: int
     passages: int
     authors: int
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class InspireChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    limit: int = 8
+    era: str | None = None
+    author: str | None = None
+
+
+class InspireChatResponse(BaseModel):
+    reply: str
+    passages: list[PassageResult]
 
 
 # ── SurrealDB helpers ─────────────────────────────────────────────────────
@@ -141,7 +160,7 @@ def _search_sync(
         where_clause = "WHERE " + " AND ".join(filters)
 
         sql = f"""
-            SELECT text, title, author, year, era, work_id, sequence,
+            SELECT text, title, author, year, era, work_id, work_id AS gutenberg_id, sequence,
                    vector::distance::knn() AS distance
             FROM ed_lit_passages
             {where_clause}
@@ -152,6 +171,59 @@ def _search_sync(
         return _extract_rows(result)
     finally:
         db.close()
+
+
+MEDIA_BASE_URL = "https://media.cogmem.ai/media"
+
+INSPIRE_SYSTEM_PROMPT = """You are a literary guide with deep knowledge of classic literature.
+You have been given passages from classic texts that are relevant to the user's question.
+Use these passages to inform your response, quoting them when appropriate.
+Be thoughtful, insightful, and help the user explore themes, ideas, and connections across literature.
+Always cite the work and author when referencing a passage.
+
+Relevant passages from the literature corpus:
+{context}"""
+
+
+def _chat_sync(
+    messages: list[dict],
+    limit: int = 8,
+    era: str | None = None,
+    author: str | None = None,
+) -> tuple[str, list[dict]]:
+    """RAG chat: embed last user message, retrieve passages, call LLM (synchronous)."""
+    last_user = next(
+        (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+    )
+    if not last_user:
+        return "Please ask a question about literature.", []
+
+    passages = _search_sync(last_user, limit=limit, era=era, author=author)
+
+    context_parts = []
+    for i, p in enumerate(passages, 1):
+        context_parts.append(
+            f"[{i}] \"{p['text']}\"\n    — {p['title']} by {p['author']} ({p['year']})"
+        )
+    context = "\n\n".join(context_parts)
+
+    system_prompt = INSPIRE_SYSTEM_PROMPT.format(context=context)
+
+    chat_messages = [{"role": "system", "content": system_prompt}]
+    for m in messages:
+        chat_messages.append({"role": m["role"], "content": m["content"]})
+
+    client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY,
+    )
+    response = client.chat.completions.create(
+        model="google/gemini-2.0-flash-001",
+        messages=chat_messages,
+        max_tokens=1024,
+    )
+    reply = response.choices[0].message.content or ""
+    return reply, passages
 
 
 def _browse_authors_sync(limit: int = 50) -> list[dict]:
@@ -234,6 +306,7 @@ async def inspire_search(
             year=row.get("year", 0),
             era=row.get("era", ""),
             work_id=row.get("work_id", ""),
+            gutenberg_id=row.get("gutenberg_id", ""),
             sequence=row.get("sequence", 0),
             distance=row.get("distance", 0.0),
         ))
@@ -294,3 +367,50 @@ async def get_corpus_stats(current_user: CurrentEDUser) -> Any:
     loop = asyncio.get_event_loop()
     stats = await loop.run_in_executor(None, _corpus_stats_sync)
     return CorpusStats(**stats)
+
+
+@router.post("/chat", response_model=InspireChatResponse)
+async def inspire_chat(
+    body: InspireChatRequest,
+    current_user: CurrentEDUser,
+) -> Any:
+    """RAG chat over the literature corpus. Retrieves relevant passages via HNSW
+    and uses them as context for an LLM response."""
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages cannot be empty")
+
+    loop = asyncio.get_event_loop()
+    reply, passage_rows = await loop.run_in_executor(
+        None, _chat_sync,
+        [m.model_dump() for m in body.messages],
+        body.limit,
+        body.era,
+        body.author,
+    )
+
+    passages = [
+        PassageResult(
+            text=row.get("text", ""),
+            title=row.get("title", ""),
+            author=row.get("author", ""),
+            year=row.get("year", 0),
+            era=row.get("era", ""),
+            work_id=row.get("work_id", ""),
+            gutenberg_id=row.get("gutenberg_id", ""),
+            sequence=row.get("sequence", 0),
+            distance=row.get("distance", 0.0),
+        )
+        for row in passage_rows
+    ]
+
+    return InspireChatResponse(reply=reply, passages=passages)
+
+
+@router.get("/reader/{gutenberg_id}")
+async def reader_redirect(
+    gutenberg_id: str,
+    current_user: CurrentEDUser,
+) -> RedirectResponse:
+    """Redirect to the raw text file on the media server."""
+    url = f"{MEDIA_BASE_URL}/{gutenberg_id}.txt"
+    return RedirectResponse(url=url, status_code=302)
