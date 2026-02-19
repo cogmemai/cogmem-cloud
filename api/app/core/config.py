@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     SURREALDB_USER: str = "admin"
     SURREALDB_PASSWORD: str = ""
 
+    @field_validator("SURREALDB_PASSWORD", mode="before")
+    @classmethod
+    def clean_surreal_password(cls, v: str) -> str:
+        return v.strip() if v else v
+
     # Cloud cockpit URL (for CORS and redirects)
     CLOUD_COCKPIT_URL: str = "https://cloud.cogmem.ai"
 
