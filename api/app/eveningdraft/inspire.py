@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/inspire", tags=["eveningdraft-inspire"])
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-EMBEDDING_MODEL = "google/gemini-embedding-001"
+EMBEDDING_MODEL = "openai/text-embedding-3-small"
 LIT_NAMESPACE = "eveningdraft"
 LIT_DATABASE = "ed_literature"
 
