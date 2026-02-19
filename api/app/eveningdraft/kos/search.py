@@ -13,6 +13,23 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def _extract_search_rows(result) -> list[dict]:
+    """Extract row dicts from a SurrealDB query result."""
+    if not result:
+        return []
+    first = result[0] if isinstance(result, list) else result
+    if isinstance(first, dict) and "result" in first:
+        first = first["result"]
+    if isinstance(first, list):
+        return [r for r in first if isinstance(r, dict)]
+    if isinstance(first, dict):
+        return [first]
+    if isinstance(result, list) and all(isinstance(r, dict) for r in result):
+        return result
+    logger.warning("Unexpected SurrealDB search result shape: %s", type(result))
+    return []
+
+
 def search_journal_passages_sync(
     db,
     query: str,
@@ -32,7 +49,12 @@ def search_journal_passages_sync(
     if exclude_content_types is None:
         exclude_content_types = ["chat/assistant", "chat/user"]
 
-    words = query.strip().lower().split()
+    # Filter out stop words to improve search quality
+    stop_words = {"what", "is", "my", "the", "a", "an", "of", "to", "in", "for", "and", "or", "it", "do", "does", "how", "who", "where", "when", "why", "are", "was", "were", "be", "been", "has", "have", "had", "i", "me", "you", "your", "we", "they", "them", "this", "that"}
+    words = [w for w in query.strip().lower().split() if w not in stop_words]
+    if not words:
+        # Fallback: use all words if filtering removed everything
+        words = query.strip().lower().split()
     if not words:
         return ""
 
@@ -44,8 +66,6 @@ def search_journal_passages_sync(
     # Exclude chat content types from journal search (matches Swift)
     exclude_clause = ""
     if exclude_content_types:
-        # Join item_id to ed_items to filter by content_type
-        # Use a subquery approach: find item_ids with excluded content_types
         type_list = ", ".join([f"'{ct}'" for ct in exclude_content_types])
         exclude_clause = f"""
             AND item_id NOT IN (
@@ -62,14 +82,17 @@ def search_journal_passages_sync(
         LIMIT {limit}
     """
 
+    logger.info("Journal search SQL: %s", sql.strip())
+
     try:
         result = db.query(sql)
-        rows = result[0] if result and isinstance(result, list) else []
-        if isinstance(rows, dict) and "result" in rows:
-            rows = rows["result"]
+        logger.info("Journal search raw result type: %s, value: %s", type(result), str(result)[:500])
+        rows = _extract_search_rows(result)
     except Exception as e:
         logger.warning("Journal search query failed: %s", e)
         return ""
+
+    logger.info("Journal search found %d rows for query '%s'", len(rows), query[:50])
 
     if not rows:
         return ""
@@ -121,9 +144,7 @@ def search_all_passages_sync(db, query: str, tenant_id: str, limit: int = 10) ->
 
     try:
         result = db.query(sql)
-        rows = result[0] if result and isinstance(result, list) else []
-        if isinstance(rows, dict) and "result" in rows:
-            rows = rows["result"]
+        rows = _extract_search_rows(result)
     except Exception as e:
         logger.warning("Search query failed: %s", e)
         return ""
