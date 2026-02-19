@@ -2,6 +2,9 @@
 
 Standalone pipeline — no cogmem-kos dependency.
 Stores items, passages, and entities in the user's SurrealDB tenant database.
+
+Uses the blocking ``surrealdb.Surreal`` library — all functions are
+synchronous so they can be called from ``run_in_executor``.
 """
 
 from __future__ import annotations
@@ -10,17 +13,15 @@ import logging
 import uuid
 from datetime import datetime
 
-from surrealdb import SurrealDB
-
-from app.eveningdraft.kos.models import Item, Passage, Entity, TextSpan, Source, EntityType
+from app.eveningdraft.kos.models import Source
 from app.eveningdraft.kos.chunking import chunk_text
 from app.eveningdraft.kos.entities import extract_entities
 
 logger = logging.getLogger(__name__)
 
 
-async def ingest_content(
-    db: SurrealDB,
+def _ingest_content_sync(
+    db,
     tenant_id: str,
     user_id: str,
     title: str,
@@ -29,12 +30,7 @@ async def ingest_content(
     content_type: str = "text/plain",
     metadata: dict | None = None,
 ) -> str:
-    """Ingest content into the Evening Draft KOS pipeline.
-
-    1. Creates an Item
-    2. Chunks the text into Passages
-    3. Extracts entities via regex
-    4. Stores everything in SurrealDB
+    """Ingest content into the Evening Draft KOS pipeline (synchronous).
 
     Returns the item's kos_id.
     """
@@ -64,7 +60,7 @@ async def ingest_content(
         "metadata": metadata or {},
     }
     try:
-        await db.create("ed_items", item_data)
+        db.create("ed_items", item_data)
         logger.info("Ingested item %s for tenant %s", item_id, tenant_id)
     except Exception as e:
         logger.error("Failed to save item %s: %s", item_id, e)
@@ -88,7 +84,7 @@ async def ingest_content(
             "metadata": {"source_title": title},
         }
         try:
-            await db.create("ed_passages", passage_data)
+            db.create("ed_passages", passage_data)
             passage_ids.append(p_id)
         except Exception as e:
             logger.warning("Failed to save passage %s: %s", p_id, e)
@@ -111,7 +107,7 @@ async def ingest_content(
                 "metadata": {},
             }
             try:
-                await db.create("ed_entities", entity_data)
+                db.create("ed_entities", entity_data)
                 all_entity_ids.append(entity_id)
             except Exception as e:
                 logger.warning("Failed to save entity %s: %s", entity_id, e)
@@ -121,15 +117,15 @@ async def ingest_content(
     return item_id
 
 
-async def ingest_chat_turn(
-    db: SurrealDB,
+def ingest_chat_turn_sync(
+    db,
     tenant_id: str,
     user_id: str,
     session_id: str,
     user_message: str,
     assistant_message: str,
 ) -> tuple[str, str]:
-    """Ingest a full chat turn (user + assistant messages).
+    """Ingest a full chat turn synchronously (user + assistant messages).
 
     Also stores the messages in ed_chat_messages for conversation history.
     Returns (user_item_id, assistant_item_id).
@@ -149,12 +145,12 @@ async def ingest_chat_turn(
             "metadata": {},
         }
         try:
-            await db.create("ed_chat_messages", msg_data)
+            db.create("ed_chat_messages", msg_data)
         except Exception as e:
             logger.warning("Failed to save chat message: %s", e)
 
     # Ingest into KOS pipeline
-    user_item_id = await ingest_content(
+    user_item_id = _ingest_content_sync(
         db=db,
         tenant_id=tenant_id,
         user_id=user_id,
@@ -165,7 +161,7 @@ async def ingest_chat_turn(
         metadata={"role": "user", "session_id": session_id},
     )
 
-    assistant_item_id = await ingest_content(
+    assistant_item_id = _ingest_content_sync(
         db=db,
         tenant_id=tenant_id,
         user_id=user_id,

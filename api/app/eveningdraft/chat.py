@@ -2,6 +2,10 @@
 
 OpenAI-compatible proxy to OpenRouter with KOS context injection
 and background ingestion of chat turns.
+
+Uses the blocking ``surrealdb.Surreal`` library (same as tenant.py).
+All SurrealDB calls are wrapped in ``run_in_executor`` to avoid
+blocking the event loop.
 """
 
 from __future__ import annotations
@@ -20,7 +24,6 @@ from openai import AsyncOpenAI
 from app.eveningdraft.deps import CurrentEDUser
 from app.core.config import settings
 from app.eveningdraft.kos.muse import build_system_prompt
-from app.eveningdraft.kos.search import get_context_for_chat
 
 logger = logging.getLogger(__name__)
 
@@ -54,51 +57,61 @@ def _get_client() -> AsyncOpenAI:
     )
 
 
-def _get_surreal_db(tenant_id: str):
-    """Create a SurrealDB connection for the tenant."""
-    from surrealdb import SurrealDB
+def _surreal_search_sync(tenant_id: str, query: str) -> str:
+    """Run KOS context search synchronously (for run_in_executor)."""
+    from surrealdb import Surreal
+    from app.eveningdraft.kos.search import search_passages_sync
 
-    url = settings.SURREALDB_URL
-    db = SurrealDB(url)
-    return db, tenant_id
+    db = Surreal(settings.SURREALDB_URL)
+    try:
+        db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+        db.use("eveningdraft", tenant_id)
+        return search_passages_sync(db, query, tenant_id)
+    except Exception as e:
+        logger.warning("KOS context search failed: %s", e)
+        return ""
+    finally:
+        db.close()
+
+
+def _surreal_ingest_sync(
+    tenant_id: str, user_id: str, session_id: str,
+    user_msg: str, assistant_msg: str,
+) -> None:
+    """Run KOS ingestion synchronously (for run_in_executor)."""
+    from surrealdb import Surreal
+    from app.eveningdraft.kos.ingest import ingest_chat_turn_sync
+
+    db = Surreal(settings.SURREALDB_URL)
+    try:
+        db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+        db.use("eveningdraft", tenant_id)
+        ingest_chat_turn_sync(
+            db=db, tenant_id=tenant_id, user_id=user_id,
+            session_id=session_id,
+            user_message=user_msg, assistant_message=assistant_msg,
+        )
+        logger.info("ED KOS ingested chat turn for tenant %s", tenant_id)
+    except Exception as e:
+        logger.error("ED KOS ingestion failed for tenant %s: %s", tenant_id, e)
+    finally:
+        db.close()
 
 
 async def _ingest_chat_turn_bg(
-    user_id: str,
-    tenant_id: str,
-    session_id: str,
-    user_msg: str,
-    assistant_msg: str,
+    user_id: str, tenant_id: str, session_id: str,
+    user_msg: str, assistant_msg: str,
 ):
     """Background task: ingest a chat turn into the ED KOS pipeline."""
     if not tenant_id or tenant_id.startswith("pending_"):
         logger.warning("Skipping ED KOS ingestion — tenant %s not provisioned", tenant_id)
         return
 
-    from surrealdb import SurrealDB as SurrealDBClient
-
-    try:
-        db = SurrealDBClient(settings.SURREALDB_URL)
-        await db.connect()
-        await db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
-        await db.use("eveningdraft", tenant_id)
-
-        from app.eveningdraft.kos.ingest import ingest_chat_turn
-
-        user_item_id, asst_item_id = await ingest_chat_turn(
-            db=db,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            session_id=session_id,
-            user_message=user_msg,
-            assistant_message=assistant_msg,
-        )
-        logger.info(
-            "ED KOS ingested chat turn for tenant %s: user=%s assistant=%s",
-            tenant_id, user_item_id, asst_item_id,
-        )
-    except Exception as e:
-        logger.error("ED KOS ingestion failed for tenant %s: %s", tenant_id, e)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, _surreal_ingest_sync,
+        tenant_id, user_id, session_id, user_msg, assistant_msg,
+    )
 
 
 @router.post("/completions")
@@ -115,26 +128,17 @@ async def chat_completions(body: ChatRequest, current_user: CurrentEDUser):
     # Try to get KOS context for the latest user message
     journal_context = ""
     if tenant_id and not tenant_id.startswith("pending_"):
-        try:
-            from surrealdb import SurrealDB as SurrealDBClient
+        last_user_msg = ""
+        for m in reversed(body.messages):
+            if m.role == "user":
+                last_user_msg = m.content
+                break
 
-            db = SurrealDBClient(settings.SURREALDB_URL)
-            await db.connect()
-            await db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
-            await db.use("eveningdraft", tenant_id)
-
-            last_user_msg = ""
-            for m in reversed(body.messages):
-                if m.role == "user":
-                    last_user_msg = m.content
-                    break
-
-            if last_user_msg:
-                journal_context = await get_context_for_chat(
-                    db=db, query=last_user_msg, tenant_id=tenant_id,
-                )
-        except Exception as e:
-            logger.warning("Failed to get KOS context: %s", e)
+        if last_user_msg:
+            loop = asyncio.get_event_loop()
+            journal_context = await loop.run_in_executor(
+                None, _surreal_search_sync, tenant_id, last_user_msg,
+            )
 
     # Inject Muse system prompt
     system_prompt = build_system_prompt(journal_context=journal_context)
