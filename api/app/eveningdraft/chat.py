@@ -85,8 +85,8 @@ def _surreal_desk_context_sync(tenant_id: str, user_id: str) -> str:
         if not rows:
             return ""
 
-        # Budget: ~7200 chars (~1800 tokens)
-        budget = 7200
+        # Budget: ~100000 chars (~25000 tokens)
+        budget = 100_000
         parts: list[str] = []
         total = 0
         for row in rows:
