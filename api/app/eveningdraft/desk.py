@@ -163,7 +163,7 @@ def _surreal_desk_sync(tenant_id: str, operation: str, **kwargs: Any) -> Any:
         elif operation == "get_enabled_context":
             user_id = kwargs["user_id"]
             result = db.query(
-                "SELECT kos_id, display_name, extracted_text FROM ed_desk_sources "
+                "SELECT kos_id, display_name, extracted_text, created_at FROM ed_desk_sources "
                 "WHERE user_id = $uid AND is_enabled = true ORDER BY created_at DESC",
                 {"uid": user_id},
             )

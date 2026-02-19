@@ -67,13 +67,20 @@ def _surreal_desk_context_sync(tenant_id: str, user_id: str) -> str:
         db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
         db.use("eveningdraft", tenant_id)
         result = db.query(
-            "SELECT display_name, extracted_text FROM ed_desk_sources "
+            "SELECT display_name, extracted_text, created_at FROM ed_desk_sources "
             "WHERE user_id = $uid AND is_enabled = true ORDER BY created_at DESC",
             {"uid": user_id},
         )
-        rows = result if isinstance(result, list) and result and isinstance(result[0], dict) else []
-        if isinstance(result, list) and result and isinstance(result[0], dict) and "result" in result[0]:
-            rows = result[0]["result"]
+        # Normalise SurrealDB result shape
+        rows: list[dict] = []
+        if isinstance(result, list) and result:
+            first = result[0]
+            if isinstance(first, dict) and "result" in first:
+                rows = first["result"]
+            elif isinstance(first, dict):
+                rows = result  # type: ignore[assignment]
+            elif isinstance(first, list):
+                rows = first
 
         if not rows:
             return ""
