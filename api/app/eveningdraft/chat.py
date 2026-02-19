@@ -21,9 +21,10 @@ from pydantic import BaseModel
 
 from openai import AsyncOpenAI
 
-from app.eveningdraft.deps import CurrentEDUser
+from app.eveningdraft.deps import CurrentEDUser, EDSessionDep
 from app.core.config import settings
 from app.eveningdraft.kos.muse import build_system_prompt
+from app.eveningdraft.tenant import provision_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +116,27 @@ async def _ingest_chat_turn_bg(
 
 
 @router.post("/completions")
-async def chat_completions(body: ChatRequest, current_user: CurrentEDUser):
+async def chat_completions(
+    body: ChatRequest, current_user: CurrentEDUser, session: EDSessionDep,
+):
     """OpenAI-compatible chat completions endpoint for Evening Draft."""
     client = _get_client()
     tenant_id = current_user.tenant_id or ""
     user_id = str(current_user.id)
     session_id = body.session_id or str(uuid.uuid4())
+
+    # Auto-provision tenant if missing or stale
+    if not tenant_id or tenant_id.startswith("pending_"):
+        try:
+            tenant_id = await provision_tenant(current_user.id)
+            current_user.tenant_id = tenant_id
+            session.add(current_user)
+            session.commit()
+            session.refresh(current_user)
+            logger.info("Auto-provisioned ED tenant %s for user %s", tenant_id, current_user.email)
+        except Exception:
+            logger.exception("Auto-provision failed for user %s", current_user.email)
+            tenant_id = ""
 
     # Build messages with Muse system prompt
     messages = []
