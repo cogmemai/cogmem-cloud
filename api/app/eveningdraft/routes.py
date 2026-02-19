@@ -34,11 +34,13 @@ from app.eveningdraft.chat import router as chat_router
 from app.eveningdraft.journal import router as journal_router
 from app.eveningdraft.desk import router as desk_router
 from app.eveningdraft.workshop import router as workshop_router
+from app.eveningdraft.inspire import router as inspire_router
 
 router.include_router(chat_router)
 router.include_router(journal_router)
 router.include_router(desk_router)
 router.include_router(workshop_router)
+router.include_router(inspire_router)
 
 
 # ── Login ────────────────────────────────────────────────────────────────
