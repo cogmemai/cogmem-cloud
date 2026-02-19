@@ -53,6 +53,10 @@ class Settings(BaseSettings):
             origins.append(self.CLOUD_COCKPIT_URL.rstrip("/"))
         origins.append("https://cogmem.ai")
         origins.append("https://www.cogmem.ai")
+        # Evening Draft domains
+        origins.append("https://eveningdraft.com")
+        origins.append("https://www.eveningdraft.com")
+        origins.append("https://dashboard.eveningdraft.com")
         return origins
 
     PROJECT_NAME: str

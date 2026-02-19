@@ -19,6 +19,7 @@ fileConfig(config.config_file_name)
 # target_metadata = None
 
 from app.models import SQLModel  # noqa
+from app.eveningdraft.models import EveningDraftUser  # noqa — register ED table
 from app.core.config import settings # noqa
 
 target_metadata = SQLModel.metadata
