@@ -32,9 +32,11 @@ router = APIRouter(prefix="/eveningdraft", tags=["eveningdraft"])
 # Include sub-routers
 from app.eveningdraft.chat import router as chat_router
 from app.eveningdraft.journal import router as journal_router
+from app.eveningdraft.desk import router as desk_router
 
 router.include_router(chat_router)
 router.include_router(journal_router)
+router.include_router(desk_router)
 
 
 # ── Login ────────────────────────────────────────────────────────────────
@@ -152,6 +154,7 @@ async def clear_user_data(current_user: CurrentEDUser) -> Any:
                 "ed_passages",
                 "ed_items",
                 "ed_journal_entries",
+                "ed_desk_sources",
             ]
             cleared = []
             for table in tables:

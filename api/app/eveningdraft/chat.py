@@ -58,6 +58,50 @@ def _get_client() -> AsyncOpenAI:
     )
 
 
+def _surreal_desk_context_sync(tenant_id: str, user_id: str) -> str:
+    """Fetch enabled desk source texts and format as desk context string."""
+    from surrealdb import Surreal
+
+    db = Surreal(settings.SURREALDB_URL)
+    try:
+        db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+        db.use("eveningdraft", tenant_id)
+        result = db.query(
+            "SELECT display_name, extracted_text FROM ed_desk_sources "
+            "WHERE user_id = $uid AND is_enabled = true ORDER BY created_at DESC",
+            {"uid": user_id},
+        )
+        rows = result if isinstance(result, list) and result and isinstance(result[0], dict) else []
+        if isinstance(result, list) and result and isinstance(result[0], dict) and "result" in result[0]:
+            rows = result[0]["result"]
+
+        if not rows:
+            return ""
+
+        # Budget: ~7200 chars (~1800 tokens)
+        budget = 7200
+        parts: list[str] = []
+        total = 0
+        for row in rows:
+            name = row.get("display_name", "Document")
+            text = row.get("extracted_text", "")
+            if not text:
+                continue
+            remaining = budget - total
+            if remaining <= 0:
+                break
+            snippet = text[:remaining]
+            parts.append(f"\U0001f4c4 {name}:\n{snippet}")
+            total += len(snippet)
+
+        return "\n\n".join(parts)
+    except Exception as e:
+        logger.warning("Desk context fetch failed: %s", e)
+        return ""
+    finally:
+        db.close()
+
+
 def _surreal_search_sync(tenant_id: str, query: str) -> str:
     """Run KOS journal context search synchronously (for run_in_executor).
 
@@ -151,9 +195,18 @@ async def chat_completions(
     # Build messages with Muse system prompt
     messages = []
 
-    # Try to get KOS context for the latest user message
+    # 3-tier context retrieval (matches Swift ChatAPIService)
+    desk_context = ""
     journal_context = ""
     if tenant_id and not tenant_id.startswith("pending_"):
+        loop = asyncio.get_event_loop()
+
+        # Tier 1: Desk context (enabled documents — ground truth)
+        desk_context = await loop.run_in_executor(
+            None, _surreal_desk_context_sync, tenant_id, user_id,
+        )
+
+        # Tier 3: Journal context (FTS from journal, excluding chat)
         last_user_msg = ""
         for m in reversed(body.messages):
             if m.role == "user":
@@ -161,13 +214,15 @@ async def chat_completions(
                 break
 
         if last_user_msg:
-            loop = asyncio.get_event_loop()
             journal_context = await loop.run_in_executor(
                 None, _surreal_search_sync, tenant_id, last_user_msg,
             )
 
     # Inject Muse system prompt (3-tier context — matches Swift MusePersonality)
-    system_prompt = build_system_prompt(journal_context=journal_context)
+    system_prompt = build_system_prompt(
+        desk_context=desk_context,
+        journal_context=journal_context,
+    )
     messages.append({"role": "system", "content": system_prompt})
 
     # Add user conversation messages
