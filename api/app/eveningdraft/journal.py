@@ -58,6 +58,41 @@ def _word_count(text: str) -> int:
     return len([w for w in text.split() if w])
 
 
+def _extract_rows(result: Any) -> list[dict]:
+    """Extract row dicts from a SurrealDB query result.
+
+    The blocking surrealdb lib returns various shapes:
+      - [{"result": [...], "status": "OK", ...}]   (older versions)
+      - [[{...}, {...}]]                            (newer versions)
+      - [{"status": "OK", "result": [...]}]
+    This helper normalises all of them to a flat list of dicts.
+    """
+    if not result:
+        return []
+
+    # result is typically a list; grab first element
+    first = result[0] if isinstance(result, list) else result
+
+    # If first element is a dict with a "result" key, unwrap it
+    if isinstance(first, dict) and "result" in first:
+        first = first["result"]
+
+    # If first is a list, that's our rows
+    if isinstance(first, list):
+        return [r for r in first if isinstance(r, dict)]
+
+    # If first is itself a dict (single row), wrap it
+    if isinstance(first, dict):
+        return [first]
+
+    # Fallback: maybe result itself is a list of dicts
+    if isinstance(result, list) and all(isinstance(r, dict) for r in result):
+        return result
+
+    logger.warning("Unexpected SurrealDB result shape: %s", type(result))
+    return []
+
+
 def _surreal_journal_sync(tenant_id: str, operation: str, **kwargs) -> Any:
     """Run a synchronous SurrealDB operation for journal entries."""
     from surrealdb import Surreal
@@ -76,10 +111,8 @@ def _surreal_journal_sync(tenant_id: str, operation: str, **kwargs) -> Any:
                 "SELECT * FROM ed_journal_entries WHERE user_id = $uid ORDER BY updated_at DESC LIMIT 50",
                 {"uid": user_id},
             )
-            rows = result[0] if result and isinstance(result, list) else []
-            if isinstance(rows, dict) and "result" in rows:
-                rows = rows["result"]
-            return rows or []
+            rows = _extract_rows(result)
+            return rows
 
         elif operation == "get":
             kos_id = kwargs["kos_id"]
@@ -88,9 +121,7 @@ def _surreal_journal_sync(tenant_id: str, operation: str, **kwargs) -> Any:
                 "SELECT * FROM ed_journal_entries WHERE kos_id = $kid AND user_id = $uid LIMIT 1",
                 {"kid": kos_id, "uid": user_id},
             )
-            rows = result[0] if result and isinstance(result, list) else []
-            if isinstance(rows, dict) and "result" in rows:
-                rows = rows["result"]
+            rows = _extract_rows(result)
             return rows[0] if rows else None
 
         elif operation == "update":
@@ -108,9 +139,7 @@ def _surreal_journal_sync(tenant_id: str, operation: str, **kwargs) -> Any:
                 f"UPDATE ed_journal_entries SET {set_clause} WHERE kos_id = $kid AND user_id = $uid RETURN AFTER",
                 params,
             )
-            rows = result[0] if result and isinstance(result, list) else []
-            if isinstance(rows, dict) and "result" in rows:
-                rows = rows["result"]
+            rows = _extract_rows(result)
             return rows[0] if rows else None
 
         elif operation == "delete":
