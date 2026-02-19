@@ -173,7 +173,7 @@ def _search_sync(
         db.close()
 
 
-MEDIA_BASE_URL = "https://media.cogmem.ai/media"
+MEDIA_BASE_URL = "https://media.cogmem.ai/media/literature"
 
 INSPIRE_SYSTEM_PROMPT = """You are a literary guide with deep knowledge of classic literature.
 You have been given passages from classic texts that are relevant to the user's question.
