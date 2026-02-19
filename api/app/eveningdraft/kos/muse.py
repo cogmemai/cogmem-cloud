@@ -41,16 +41,29 @@ CRITICAL — USING CONTEXT:
 
 
 def build_system_prompt(
-    journal_context: str = "",
+    desk_context: str = "",
     graph_context: str = "",
+    journal_context: str = "",
 ) -> str:
-    """Build the Muse system prompt, optionally injecting retrieved context."""
+    """Build the Muse system prompt with 3-tier context retrieval.
+
+    Matches the Swift MusePersonality.buildSystemPrompt flow:
+      1. Desk context — open reference material (ground truth)
+      2. Graph context — entity relationships from knowledge graph
+      3. Journal context — FTS passages from journal (excluding chat)
+    """
     prompt = BASE_PERSONALITY
 
-    if journal_context:
-        prompt += f"\n\n--- JOURNAL CONTEXT (from the writer's journal) ---\n{journal_context}\n"
+    # Tier 1: Desk context (largest budget — ground truth from open documents)
+    if desk_context:
+        prompt += f"\n\n--- DESK (open reference material — ground truth) ---\n{desk_context}\n"
 
+    # Tier 2: Graph context (entity relationships)
     if graph_context:
         prompt += f"\n\n--- KNOWLEDGE GRAPH (entity relationships) ---\n{graph_context}\n"
+
+    # Tier 3: Journal context (FTS from journal, excluding chat messages)
+    if journal_context:
+        prompt += f"\n\n--- JOURNAL CONTEXT (from the writer's journal) ---\n{journal_context}\n"
 
     return prompt

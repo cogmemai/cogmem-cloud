@@ -59,15 +59,19 @@ def _get_client() -> AsyncOpenAI:
 
 
 def _surreal_search_sync(tenant_id: str, query: str) -> str:
-    """Run KOS context search synchronously (for run_in_executor)."""
+    """Run KOS journal context search synchronously (for run_in_executor).
+
+    Excludes chat/user and chat/assistant content types — matches Swift
+    KOSSearchService.searchJournalPassages.
+    """
     from surrealdb import Surreal
-    from app.eveningdraft.kos.search import search_passages_sync
+    from app.eveningdraft.kos.search import search_journal_passages_sync
 
     db = Surreal(settings.SURREALDB_URL)
     try:
         db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
         db.use("eveningdraft", tenant_id)
-        return search_passages_sync(db, query, tenant_id)
+        return search_journal_passages_sync(db, query, tenant_id)
     except Exception as e:
         logger.warning("KOS context search failed: %s", e)
         return ""
@@ -78,8 +82,12 @@ def _surreal_search_sync(tenant_id: str, query: str) -> str:
 def _surreal_ingest_sync(
     tenant_id: str, user_id: str, session_id: str,
     user_msg: str, assistant_msg: str,
+    llm_prompt: str | None = None,
 ) -> None:
-    """Run KOS ingestion synchronously (for run_in_executor)."""
+    """Run KOS ingestion synchronously (for run_in_executor).
+
+    Passes llm_prompt to assistant item — matches Swift ChatAPIService flow.
+    """
     from surrealdb import Surreal
     from app.eveningdraft.kos.ingest import ingest_chat_turn_sync
 
@@ -91,6 +99,7 @@ def _surreal_ingest_sync(
             db=db, tenant_id=tenant_id, user_id=user_id,
             session_id=session_id,
             user_message=user_msg, assistant_message=assistant_msg,
+            llm_prompt=llm_prompt,
         )
         logger.info("ED KOS ingested chat turn for tenant %s", tenant_id)
     except Exception as e:
@@ -102,6 +111,7 @@ def _surreal_ingest_sync(
 async def _ingest_chat_turn_bg(
     user_id: str, tenant_id: str, session_id: str,
     user_msg: str, assistant_msg: str,
+    llm_prompt: str | None = None,
 ):
     """Background task: ingest a chat turn into the ED KOS pipeline."""
     if not tenant_id or tenant_id.startswith("pending_"):
@@ -111,7 +121,7 @@ async def _ingest_chat_turn_bg(
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None, _surreal_ingest_sync,
-        tenant_id, user_id, session_id, user_msg, assistant_msg,
+        tenant_id, user_id, session_id, user_msg, assistant_msg, llm_prompt,
     )
 
 
@@ -156,7 +166,7 @@ async def chat_completions(
                 None, _surreal_search_sync, tenant_id, last_user_msg,
             )
 
-    # Inject Muse system prompt
+    # Inject Muse system prompt (3-tier context — matches Swift MusePersonality)
     system_prompt = build_system_prompt(journal_context=journal_context)
     messages.append({"role": "system", "content": system_prompt})
 
@@ -170,6 +180,17 @@ async def chat_completions(
         if m.role == "user":
             last_user_content = m.content
             break
+
+    # Build full LLM prompt for logging/auditability (matches Swift buildFullPrompt)
+    full_llm_prompt = f"SYSTEM PROMPT:\n{system_prompt}\n\n"
+    if len(body.messages) > 1:
+        full_llm_prompt += "CONVERSATION HISTORY:\n"
+        for m in body.messages[:-1]:
+            role_label = "Writer" if m.role == "user" else "Muse"
+            full_llm_prompt += f"{role_label}: {m.content}\n"
+        full_llm_prompt += "\n"
+    if last_user_content:
+        full_llm_prompt += f"WRITER:\n{last_user_content}"
 
     if body.stream:
         # Streaming response
@@ -205,7 +226,7 @@ async def chat_completions(
                 logger.error("Stream error: %s", e)
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-            # Background ingest
+            # Background ingest (with llm_prompt — matches Swift)
             if full_response and last_user_content:
                 asyncio.create_task(
                     _ingest_chat_turn_bg(
@@ -214,6 +235,7 @@ async def chat_completions(
                         session_id=session_id,
                         user_msg=last_user_content,
                         assistant_msg=full_response,
+                        llm_prompt=full_llm_prompt,
                     )
                 )
 
@@ -237,7 +259,7 @@ async def chat_completions(
 
         assistant_content = completion.choices[0].message.content or ""
 
-        # Background ingest
+        # Background ingest (with llm_prompt — matches Swift)
         if assistant_content and last_user_content:
             asyncio.create_task(
                 _ingest_chat_turn_bg(
@@ -246,6 +268,7 @@ async def chat_completions(
                     session_id=session_id,
                     user_msg=last_user_content,
                     assistant_msg=assistant_content,
+                    llm_prompt=full_llm_prompt,
                 )
             )
 

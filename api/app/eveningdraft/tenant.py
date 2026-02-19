@@ -25,6 +25,8 @@ DEFINE TABLE IF NOT EXISTS ed_items SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS idx_ed_items_kos_id ON ed_items FIELDS kos_id UNIQUE;
 DEFINE INDEX IF NOT EXISTS idx_ed_items_tenant ON ed_items FIELDS tenant_id;
 DEFINE INDEX IF NOT EXISTS idx_ed_items_user ON ed_items FIELDS user_id;
+DEFINE INDEX IF NOT EXISTS idx_ed_items_content_type ON ed_items FIELDS content_type;
+DEFINE INDEX IF NOT EXISTS idx_ed_items_source ON ed_items FIELDS source;
 
 DEFINE TABLE IF NOT EXISTS ed_passages SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS idx_ed_passages_kos_id ON ed_passages FIELDS kos_id UNIQUE;

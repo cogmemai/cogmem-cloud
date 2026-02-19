@@ -23,6 +23,9 @@ class Source(str, Enum):
     CHAT = "chat"
     NOTE = "note"
     FILE = "file"
+    FILES = "files"
+    PDF = "pdf"
+    EMAIL = "email"
     WEB = "web"
     OTHER = "other"
 
@@ -49,9 +52,11 @@ class Item(BaseModel):
     tenant_id: str
     user_id: str
     source: Source = Source.CHAT
+    external_id: str | None = None
     title: str = ""
     content_text: str = ""
     content_type: str = "text/plain"
+    llm_prompt: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: dict = Field(default_factory=dict)

@@ -26,8 +26,10 @@ def _ingest_content_sync(
     user_id: str,
     title: str,
     content: str,
-    source: str = "chat",
+    source: str = "note",
     content_type: str = "text/plain",
+    external_id: str | None = None,
+    llm_prompt: str | None = None,
     metadata: dict | None = None,
 ) -> str:
     """Ingest content into the Evening Draft KOS pipeline (synchronous).
@@ -46,15 +48,17 @@ def _ingest_content_sync(
 
     now = datetime.utcnow().isoformat()
 
-    # Step 1: Save item
+    # Step 1: Save item (aligned with Swift KOSItem fields)
     item_data = {
         "kos_id": item_id,
         "tenant_id": tenant_id,
         "user_id": user_id,
         "source": source_enum.value,
+        "external_id": external_id,
         "title": title,
         "content_text": content,
         "content_type": content_type,
+        "llm_prompt": llm_prompt,
         "created_at": now,
         "updated_at": now,
         "metadata": metadata or {},
@@ -124,10 +128,14 @@ def ingest_chat_turn_sync(
     session_id: str,
     user_message: str,
     assistant_message: str,
+    llm_prompt: str | None = None,
 ) -> tuple[str, str]:
     """Ingest a full chat turn synchronously (user + assistant messages).
 
-    Also stores the messages in ed_chat_messages for conversation history.
+    Matches the Swift ChatAPIService flow:
+    - Stores messages in ed_chat_messages for conversation history
+    - Ingests into KOS with content_type='chat/user' and 'chat/assistant'
+    - Captures the full LLM prompt on assistant items for auditability
     Returns (user_item_id, assistant_item_id).
     """
     now = datetime.utcnow().isoformat()
@@ -149,27 +157,29 @@ def ingest_chat_turn_sync(
         except Exception as e:
             logger.warning("Failed to save chat message: %s", e)
 
-    # Ingest into KOS pipeline
+    # Ingest user message into KOS (source=note, content_type=chat/user — matches Swift)
     user_item_id = _ingest_content_sync(
         db=db,
         tenant_id=tenant_id,
         user_id=user_id,
         title=f"Chat: {user_message[:50]}",
         content=user_message,
-        source="chat",
-        content_type="text/plain",
-        metadata={"role": "user", "session_id": session_id},
+        source="note",
+        content_type="chat/user",
+        metadata={"type": "chat", "role": "user", "session_id": session_id},
     )
 
+    # Ingest assistant message into KOS with llm_prompt (matches Swift)
     assistant_item_id = _ingest_content_sync(
         db=db,
         tenant_id=tenant_id,
         user_id=user_id,
         title=f"Muse: {assistant_message[:50]}",
         content=assistant_message,
-        source="chat",
-        content_type="text/plain",
-        metadata={"role": "assistant", "session_id": session_id},
+        source="note",
+        content_type="chat/assistant",
+        llm_prompt=llm_prompt,
+        metadata={"type": "chat", "role": "assistant", "session_id": session_id},
     )
 
     return user_item_id, assistant_item_id
