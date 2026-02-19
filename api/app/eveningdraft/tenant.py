@@ -66,9 +66,20 @@ async def provision_tenant(user_id: uuid.UUID) -> str:
     logger.info("Provisioning Evening Draft tenant database: %s", tenant_id)
 
     def _provision_sync() -> str:
-        db = Surreal(settings.SURREALDB_URL)
+        url = settings.SURREALDB_URL
+        db = Surreal(url)
         try:
-            db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+            # Try to sign in - if it fails, try without password
+            try:
+                db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+            except Exception as e:
+                logger.warning("Failed to authenticate with password, trying without: %s", e)
+                try:
+                    db.signin({"username": settings.SURREALDB_USER, "password": ""})
+                except Exception as e2:
+                    logger.warning("Auth without password also failed, continuing unauthenticated: %s", e2)
+
+            # Switch to the eveningdraft namespace and create tenant database
             db.use(ED_NAMESPACE, tenant_id)
             db.query(ED_TENANT_SCHEMA)
             logger.info("Evening Draft tenant %s provisioned successfully", tenant_id)

@@ -18,7 +18,7 @@ spec:
         runAsGroup: 0
       containers:
       - name: surrealdb
-        image: surrealdb/surrealdb:latest
+        image: surrealdb/surrealdb:v3.0.0
         ports:
         - containerPort: 8080
           name: http
@@ -40,8 +40,6 @@ spec:
             secretKeyRef:
               name: cogmem-secrets
               key: surreal-password
-        - name: SURREAL_CAPS_DENY
-          value: "http"
         volumeMounts:
         - name: surrealdb-storage
           mountPath: /surrealdb
@@ -59,8 +57,9 @@ spec:
           periodSeconds: 5
       volumes:
       - name: surrealdb-storage
-        persistentVolumeClaim:
-          claimName: surrealdb-pvc
+        hostPath:
+          path: /data/surrealdb
+          type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
