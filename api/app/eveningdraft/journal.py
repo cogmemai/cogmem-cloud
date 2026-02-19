@@ -10,6 +10,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -174,7 +175,7 @@ async def list_entries(current_user: CurrentEDUser) -> list[JournalEntryOut]:
     user_id = str(current_user.id)
     loop = asyncio.get_event_loop()
     rows = await loop.run_in_executor(
-        None, _surreal_journal_sync, tenant_id, "list", **{"user_id": user_id},
+        None, partial(_surreal_journal_sync, tenant_id, "list", user_id=user_id),
     )
 
     return [
@@ -218,7 +219,7 @@ async def create_entry(body: JournalEntryCreate, current_user: CurrentEDUser) ->
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
-        None, _surreal_journal_sync, tenant_id, "create", **{"data": data},
+        None, partial(_surreal_journal_sync, tenant_id, "create", data=data),
     )
 
     return JournalEntryOut(**data)
@@ -244,8 +245,7 @@ async def update_entry(kos_id: str, body: JournalEntryUpdate, current_user: Curr
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
-        None, _surreal_journal_sync, tenant_id, "update",
-        **{"kos_id": kos_id, "user_id": user_id, "updates": updates},
+        None, partial(_surreal_journal_sync, tenant_id, "update", kos_id=kos_id, user_id=user_id, updates=updates),
     )
 
     if not result:
@@ -274,8 +274,7 @@ async def delete_entry(kos_id: str, current_user: CurrentEDUser) -> dict:
     user_id = str(current_user.id)
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
-        None, _surreal_journal_sync, tenant_id, "delete",
-        **{"kos_id": kos_id, "user_id": user_id},
+        None, partial(_surreal_journal_sync, tenant_id, "delete", kos_id=kos_id, user_id=user_id),
     )
 
     return {"status": "ok", "deleted": kos_id}
@@ -293,8 +292,7 @@ async def index_entry(kos_id: str, current_user: CurrentEDUser) -> dict:
     # Fetch the entry first
     loop = asyncio.get_event_loop()
     entry = await loop.run_in_executor(
-        None, _surreal_journal_sync, tenant_id, "get",
-        **{"kos_id": kos_id, "user_id": user_id},
+        None, partial(_surreal_journal_sync, tenant_id, "get", kos_id=kos_id, user_id=user_id),
     )
 
     if not entry:
