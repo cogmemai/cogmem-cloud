@@ -127,3 +127,41 @@ async def provision_tenant_for_me(
             detail="Failed to provision tenant database. Is SurrealDB reachable?",
         )
     return current_user
+
+
+@router.post("/users/me/clear-data")
+async def clear_user_data(current_user: CurrentEDUser) -> Any:
+    """Clear all KOS data from the user's SurrealDB tenant database."""
+    import asyncio
+    from surrealdb import Surreal
+
+    tenant_id = current_user.tenant_id
+    if not tenant_id or tenant_id.startswith("pending_"):
+        raise HTTPException(status_code=400, detail="No tenant database provisioned")
+
+    def _clear_sync() -> dict:
+        db = Surreal(settings.SURREALDB_URL)
+        try:
+            db.signin({"username": settings.SURREALDB_USER, "password": settings.SURREALDB_PASSWORD})
+            db.use("eveningdraft", tenant_id)
+            tables = [
+                "ed_chat_messages",
+                "ed_entities",
+                "ed_passages",
+                "ed_items",
+                "ed_journal_entries",
+            ]
+            cleared = []
+            for table in tables:
+                try:
+                    db.query(f"DELETE FROM {table}")
+                    cleared.append(table)
+                except Exception as e:
+                    logger.warning("Failed to clear %s: %s", table, e)
+            return {"cleared_tables": cleared, "tenant_id": tenant_id}
+        finally:
+            db.close()
+
+    result = await asyncio.get_event_loop().run_in_executor(None, _clear_sync)
+    logger.info("Cleared data for tenant %s: %s", tenant_id, result["cleared_tables"])
+    return {"status": "ok", **result}
