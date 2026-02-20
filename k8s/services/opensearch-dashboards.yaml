@@ -29,9 +29,15 @@ spec:
         - name: OPENSEARCH_SSL_VERIFICATIONMODE
           value: "none"
         - name: OPENSEARCH_USERNAME
-          value: "cogmem_admin"
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: opensearch-username
         - name: OPENSEARCH_PASSWORD
-          value: "REDACTED"
+          valueFrom:
+            secretKeyRef:
+              name: cogmem-secrets
+              key: opensearch-password
         resources:
           requests:
             memory: "512Mi"
