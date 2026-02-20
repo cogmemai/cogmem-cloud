@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/inspire", tags=["eveningdraft-inspire"])
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-CHAT_MODEL = "google/gemini-2.5-flash-preview"
+CHAT_MODEL = "google/gemini-2.5-flash"
 LIT_NAMESPACE = "eveningdraft"
 LIT_DATABASE = "ed_literature"
 MEDIA_BASE_URL = "https://media.cogmem.ai/media/literature"
