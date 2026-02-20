@@ -23,6 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY ./api/scripts /app/api/scripts
 COPY ./api/pyproject.toml ./api/alembic.ini /app/api/
 COPY ./api/app /app/api/app
+COPY ./api/kos /app/api/kos
 COPY ./api/kos_extensions /app/api/kos_extensions
 
 # Final sync (installs the workspace package)

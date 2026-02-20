@@ -491,12 +491,12 @@ version = "0.1.0"
 source = { editable = "api" }
 dependencies = [
     { name = "alembic" },
-    { name = "cogmem-kos", extra = ["litellm", "surrealdb"] },
     { name = "email-validator" },
     { name = "emails" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "litellm" },
     { name = "openai" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pwdlib", extra = ["argon2", "bcrypt"] },
@@ -505,11 +505,14 @@ dependencies = [
     { name = "pyjwt" },
     { name = "pymupdf" },
     { name = "python-docx" },
+    { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "rich" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "sqlmodel" },
     { name = "surrealdb" },
     { name = "tenacity" },
+    { name = "typer" },
 ]
 
 [package.dev-dependencies]
@@ -526,12 +529,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.12.1,<2.0.0" },
-    { name = "cogmem-kos", extras = ["surrealdb", "litellm"], git = "https://github.com/cogmemai/cogmem-kos.git?branch=main" },
     { name = "email-validator", specifier = ">=2.1.0.post1,<3.0.0.0" },
     { name = "emails", specifier = ">=0.6,<1.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.114.2,<1.0.0" },
     { name = "httpx", specifier = ">=0.25.1,<1.0.0" },
     { name = "jinja2", specifier = ">=3.1.4,<4.0.0" },
+    { name = "litellm", specifier = ">=1.0.0" },
     { name = "openai", specifier = ">=1.0.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.13,<4.0.0" },
     { name = "pwdlib", extras = ["argon2", "bcrypt"], specifier = ">=0.3.0" },
@@ -540,11 +543,14 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.8.0,<3.0.0" },
     { name = "pymupdf", specifier = ">=1.24.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-multipart", specifier = ">=0.0.7,<1.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=1.40.6,<2.0.0" },
     { name = "sqlmodel", specifier = ">=0.0.21,<1.0.0" },
     { name = "surrealdb", specifier = ">=0.3.0" },
     { name = "tenacity", specifier = ">=8.2.3,<9.0.0" },
+    { name = "typer", specifier = ">=0.9.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -556,26 +562,6 @@ dev = [
     { name = "pytest", specifier = ">=7.4.3,<8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "ruff", specifier = ">=0.2.2,<1.0.0" },
-]
-
-[[package]]
-name = "cogmem-kos"
-version = "0.1.0"
-source = { git = "https://github.com/cogmemai/cogmem-kos.git?branch=main#0feff7ac1ce4c5a57431609cc5bddf44e9980c4f" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-    { name = "typer" },
-]
-
-[package.optional-dependencies]
-litellm = [
-    { name = "litellm" },
-]
-surrealdb = [
-    { name = "surrealdb" },
 ]
 
 [[package]]
