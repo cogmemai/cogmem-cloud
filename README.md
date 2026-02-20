@@ -7,6 +7,11 @@ Agentic Knowledge Operating System — the cloud infrastructure and backend for 
 ```
 cogmem-cloud/
 ├── api/                          # FastAPI backend
+│   ├── kos/                      # KOS engine (inlined from cogmem-kos — MIT)
+│   │   ├── core/                 # Models, contracts, ACP meta-kernel, agents
+│   │   ├── providers/            # SurrealDB, Neo4j, Qdrant, OpenSearch, Postgres, SQLite
+│   │   ├── agents/               # Chunk, extract, enrich, index, ingest, planning agents
+│   │   └── kernel/               # HTTP + MCP API, config, registry
 │   ├── app/                      # Core: auth, JWT, users, tenant provisioning
 │   │   └── eveningdraft/         # Evening Draft app suite
 │   │       ├── chat.py           # Muse AI writing assistant (OpenRouter/Gemini)
@@ -14,10 +19,10 @@ cogmem-cloud/
 │   │       ├── desk.py           # Document context (PDF/DOCX upload)
 │   │       ├── workshop.py       # Writer's Workshop (SSE multi-agent review)
 │   │       ├── inspire.py        # Literary guide (Gemini tool-calling, Gutenberg index)
-│   │       └── kos/              # Standalone KOS: chunking, entities, ingest, search
-│   ├── kos_extensions/           # Enterprise KOS modules
+│   │       └── kos/              # Standalone ED KOS: chunking, entities, ingest, search
+│   ├── kos_extensions/           # Enterprise cloud layer on top of kos/
 │   │   ├── routes/               # ACP, KOS CRUD, workbench API routes
-│   │   ├── stores/               # SurrealDB item/passage/entity stores
+│   │   ├── stores/               # SurrealDB store implementations
 │   │   ├── workbench/            # AI workbench (experiments, runs)
 │   │   └── registry.py           # Per-tenant SurrealDB client registry
 │   ├── Dockerfile
