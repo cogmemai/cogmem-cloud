@@ -1,8 +1,10 @@
 """Inspire endpoint for Evening Draft.
 
-Provides semantic search over the shared Gutenberg literature corpus
-stored in the ed_literature SurrealDB database. Uses HNSW vector index
-for fast approximate nearest-neighbor search.
+LLM-driven literary guide that uses tool-calling to search a lightweight
+SurrealDB catalog of ~28K Gutenberg works. The LLM (Gemini Flash) knows
+these texts from its training data and uses tools to verify availability
+in the library, search by title/author/era, and retrieve passages from
+the media server.
 
 All SurrealDB calls use the blocking ``surrealdb.Surreal`` library
 wrapped in ``run_in_executor`` to avoid blocking the event loop.
@@ -11,10 +13,13 @@ wrapped in ``run_in_executor`` to avoid blocking the event loop.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
+import httpx
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
@@ -28,76 +33,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/inspire", tags=["eveningdraft-inspire"])
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-EMBEDDING_MODEL = "openai/text-embedding-3-small"
+CHAT_MODEL = "google/gemini-2.5-flash-preview"
 LIT_NAMESPACE = "eveningdraft"
 LIT_DATABASE = "ed_literature"
+MEDIA_BASE_URL = "https://media.cogmem.ai/media/literature"
+MAX_TOOL_ROUNDS = 5
 
 
 # ── Request / Response models ─────────────────────────────────────────────
-
-class InspireSearchRequest(BaseModel):
-    query: str
-    limit: int = 10
-    era: str | None = None
-    author: str | None = None
-
-
-class PassageResult(BaseModel):
-    text: str
-    title: str
-    author: str
-    year: int
-    era: str
-    work_id: str
-    gutenberg_id: str
-    sequence: int
-    distance: float
-
-
-class InspireSearchResponse(BaseModel):
-    results: list[PassageResult]
-    total: int
-    query: str
-
-
-class AuthorInfo(BaseModel):
-    name: str
-    work_count: int
-    eras: list[str]
-    notable_works: list[str]
-
-
-class WorkInfo(BaseModel):
-    gutenberg_id: str
-    title: str
-    author: str
-    year: int
-    era: str
-    word_count: int
-    chunk_count: int
-
-
-class CorpusStats(BaseModel):
-    works: int
-    passages: int
-    authors: int
-
 
 class ChatMessage(BaseModel):
     role: str
     content: str
 
 
+class BookInfo(BaseModel):
+    gutenberg_id: str
+    title: str
+    author: str
+    year: int
+    era: str
+    gutenberg_url: str = ""
+
+
 class InspireChatRequest(BaseModel):
     messages: list[ChatMessage]
-    limit: int = 8
-    era: str | None = None
-    author: str | None = None
 
 
 class InspireChatResponse(BaseModel):
     reply: str
-    passages: list[PassageResult]
+    books: list[BookInfo]
 
 
 # ── SurrealDB helpers ─────────────────────────────────────────────────────
@@ -123,287 +88,358 @@ def _get_lit_db():
     return db
 
 
-def _embed_query_sync(text: str) -> list[float]:
-    """Embed a query string using OpenRouter (synchronous)."""
-    client = OpenAI(
-        base_url=OPENROUTER_BASE_URL,
-        api_key=settings.OPENROUTER_API_KEY,
-    )
-    response = client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=[text],
-    )
-    return response.data[0].embedding
+# ── Tool implementations ─────────────────────────────────────────────────
 
-
-def _search_sync(
-    query: str,
+def _tool_search_library(
+    query: str | None = None,
+    author: str | None = None,
+    era: str | None = None,
+    year_min: int | None = None,
+    year_max: int | None = None,
     limit: int = 10,
-    era: str | None = None,
-    author: str | None = None,
 ) -> list[dict]:
-    """Embed query + HNSW search (synchronous, for run_in_executor)."""
-    query_vec = _embed_query_sync(query)
-
-    db = _get_lit_db()
-    try:
-        filters = [f"embedding <|{limit}, COSINE|> $qvec"]
-        params: dict = {"qvec": query_vec}
-
-        if era:
-            filters.append("era = $era")
-            params["era"] = era
-        if author:
-            filters.append("author = $author")
-            params["author"] = author
-
-        where_clause = "WHERE " + " AND ".join(filters)
-
-        sql = f"""
-            SELECT text, title, author, year, era, work_id, work_id AS gutenberg_id, sequence,
-                   vector::distance::knn() AS distance
-            FROM ed_lit_passages
-            {where_clause}
-            ORDER BY distance
-        """
-
-        result = db.query(sql, params)
-        return _extract_rows(result)
-    finally:
-        db.close()
-
-
-MEDIA_BASE_URL = "https://media.cogmem.ai/media/literature"
-
-INSPIRE_SYSTEM_PROMPT = """You are a literary guide with deep knowledge of classic literature.
-You have been given passages from classic texts that are relevant to the user's question.
-Use these passages to inform your response, quoting them when appropriate.
-Be thoughtful, insightful, and help the user explore themes, ideas, and connections across literature.
-Always cite the work and author when referencing a passage.
-
-Relevant passages from the literature corpus:
-{context}"""
-
-
-def _chat_sync(
-    messages: list[dict],
-    limit: int = 8,
-    era: str | None = None,
-    author: str | None = None,
-) -> tuple[str, list[dict]]:
-    """RAG chat: embed last user message, retrieve passages, call LLM (synchronous)."""
-    last_user = next(
-        (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
-    )
-    if not last_user:
-        return "Please ask a question about literature.", []
-
-    passages = _search_sync(last_user, limit=limit, era=era, author=author)
-
-    context_parts = []
-    for i, p in enumerate(passages, 1):
-        context_parts.append(
-            f"[{i}] \"{p['text']}\"\n    — {p['title']} by {p['author']} ({p['year']})"
-        )
-    context = "\n\n".join(context_parts)
-
-    system_prompt = INSPIRE_SYSTEM_PROMPT.format(context=context)
-
-    chat_messages = [{"role": "system", "content": system_prompt}]
-    for m in messages:
-        chat_messages.append({"role": m["role"], "content": m["content"]})
-
-    client = OpenAI(
-        base_url=OPENROUTER_BASE_URL,
-        api_key=settings.OPENROUTER_API_KEY,
-    )
-    response = client.chat.completions.create(
-        model="google/gemini-2.0-flash-001",
-        messages=chat_messages,
-        max_tokens=1024,
-    )
-    reply = response.choices[0].message.content or ""
-    return reply, passages
-
-
-def _browse_authors_sync(limit: int = 50) -> list[dict]:
-    db = _get_lit_db()
-    try:
-        result = db.query(
-            "SELECT name, work_count, eras, notable_works FROM ed_lit_authors "
-            "ORDER BY work_count DESC LIMIT $lim",
-            {"lim": limit},
-        )
-        return _extract_rows(result)
-    finally:
-        db.close()
-
-
-def _browse_works_sync(
-    author: str | None = None,
-    era: str | None = None,
-    limit: int = 50,
-) -> list[dict]:
+    """Search the Gutenberg library catalog by title keywords, author, era, or year range."""
     db = _get_lit_db()
     try:
         filters = []
-        params: dict = {"lim": limit}
+        params: dict[str, Any] = {"lim": min(limit, 20)}
+
+        if query:
+            filters.append("(title @@ $query OR author @@ $query)")
+            params["query"] = query
         if author:
-            filters.append("author = $author")
+            filters.append("string::lowercase(author) CONTAINS string::lowercase($author)")
             params["author"] = author
         if era:
             filters.append("era = $era")
             params["era"] = era
+        if year_min is not None:
+            filters.append("year >= $year_min")
+            params["year_min"] = year_min
+        if year_max is not None:
+            filters.append("year <= $year_max")
+            params["year_max"] = year_max
 
         where = "WHERE " + " AND ".join(filters) if filters else ""
-        result = db.query(
-            f"SELECT gutenberg_id, title, author, year, era, word_count, chunk_count "
-            f"FROM ed_lit_works {where} ORDER BY year ASC LIMIT $lim",
-            params,
+        sql = (
+            f"SELECT gutenberg_id, title, author, year, era, gutenberg_url "
+            f"FROM ed_lit_works {where} ORDER BY year ASC LIMIT $lim"
         )
-        return _extract_rows(result)
+        rows = _extract_rows(db.query(sql, params))
+        return rows
     finally:
         db.close()
 
 
-def _corpus_stats_sync() -> dict:
+def _tool_get_book(gutenberg_id: str) -> dict | None:
+    """Look up a specific book by its Gutenberg ID to verify it exists in the library."""
+    db = _get_lit_db()
+    try:
+        rows = _extract_rows(db.query(
+            "SELECT gutenberg_id, title, author, year, era, gutenberg_url "
+            "FROM ed_lit_works WHERE gutenberg_id = $gid LIMIT 1",
+            {"gid": str(gutenberg_id)},
+        ))
+        return rows[0] if rows else None
+    finally:
+        db.close()
+
+
+def _tool_get_passage(gutenberg_id: str, search_term: str) -> dict:
+    """Retrieve a passage from a book's full text by searching for a term.
+    Returns the surrounding context around the first match."""
+    url = f"{MEDIA_BASE_URL}/{gutenberg_id}.txt"
+    try:
+        resp = httpx.get(url, timeout=15, follow_redirects=True)
+        resp.raise_for_status()
+        text = resp.text
+    except Exception as e:
+        return {"error": f"Could not fetch text for {gutenberg_id}: {e}"}
+
+    # Find the search term (case-insensitive)
+    pattern = re.compile(re.escape(search_term), re.IGNORECASE)
+    match = pattern.search(text)
+    if not match:
+        return {"error": f"Term '{search_term}' not found in text {gutenberg_id}"}
+
+    # Extract ~2000 chars of context around the match
+    start = max(0, match.start() - 1000)
+    end = min(len(text), match.end() + 1000)
+    passage = text[start:end]
+
+    # Clean up to paragraph boundaries
+    if start > 0:
+        nl = passage.find("\n")
+        if nl > 0 and nl < 200:
+            passage = passage[nl + 1:]
+    if end < len(text):
+        nl = passage.rfind("\n")
+        if nl > len(passage) - 200:
+            passage = passage[:nl]
+
+    return {
+        "gutenberg_id": gutenberg_id,
+        "passage": passage.strip(),
+        "match_position": match.start(),
+    }
+
+
+def _tool_get_library_stats() -> dict:
+    """Get statistics about the library catalog."""
     db = _get_lit_db()
     try:
         works = _extract_rows(db.query("SELECT count() AS c FROM ed_lit_works GROUP ALL"))
-        passages = _extract_rows(db.query("SELECT count() AS c FROM ed_lit_passages GROUP ALL"))
-        authors = _extract_rows(db.query("SELECT count() AS c FROM ed_lit_authors GROUP ALL"))
         return {
-            "works": works[0].get("c", 0) if works else 0,
-            "passages": passages[0].get("c", 0) if passages else 0,
-            "authors": authors[0].get("c", 0) if authors else 0,
+            "total_works": works[0].get("c", 0) if works else 0,
+            "eras": ["Ancient", "Medieval", "Renaissance", "Enlightenment", "Romantic", "Victorian", "Modern"],
         }
     finally:
         db.close()
 
 
+# ── Tool definitions for OpenAI function-calling ─────────────────────────
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_library",
+            "description": (
+                "Search the Gutenberg library catalog of ~28,000 classic texts. "
+                "Use this to find books by title keywords, author name, literary era, "
+                "or year range. Returns matching works with their Gutenberg IDs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search keywords for title or author (e.g. 'moby dick', 'shakespeare')",
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Filter by author name (partial match, e.g. 'Melville')",
+                    },
+                    "era": {
+                        "type": "string",
+                        "enum": ["Ancient", "Medieval", "Renaissance", "Enlightenment", "Romantic", "Victorian", "Modern"],
+                        "description": "Filter by literary era",
+                    },
+                    "year_min": {
+                        "type": "integer",
+                        "description": "Minimum publication year",
+                    },
+                    "year_max": {
+                        "type": "integer",
+                        "description": "Maximum publication year",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return (default 10, max 20)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_book",
+            "description": (
+                "Look up a specific book by its Project Gutenberg ID number to verify "
+                "it exists in the library. Returns title, author, year, and era."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "gutenberg_id": {
+                        "type": "string",
+                        "description": "The Project Gutenberg ID number (e.g. '2701' for Moby Dick)",
+                    },
+                },
+                "required": ["gutenberg_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_passage",
+            "description": (
+                "Retrieve a specific passage from a book's full text by searching for "
+                "a phrase or keyword. Returns ~2000 characters of context around the match. "
+                "Use this when the user wants to read a specific part of a text, or when "
+                "you want to quote an actual passage."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "gutenberg_id": {
+                        "type": "string",
+                        "description": "The Gutenberg ID of the book",
+                    },
+                    "search_term": {
+                        "type": "string",
+                        "description": "A phrase or keyword to search for in the text",
+                    },
+                },
+                "required": ["gutenberg_id", "search_term"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_library_stats",
+            "description": "Get statistics about the library catalog (total works, available eras).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
+TOOL_DISPATCH = {
+    "search_library": _tool_search_library,
+    "get_book": _tool_get_book,
+    "get_passage": _tool_get_passage,
+    "get_library_stats": _tool_get_library_stats,
+}
+
+SYSTEM_PROMPT = """You are a literary guide and reading companion for Evening Draft, \
+a creative writing application. You have access to a digital library of approximately \
+28,000 classic texts from Project Gutenberg spanning from ancient works to the early 20th century.
+
+Your role:
+- Help users discover books based on themes, moods, topics, or literary interests
+- Recommend specific works and explain why they're relevant
+- Discuss literary themes, characters, and ideas across the corpus
+- Retrieve and share actual passages from the texts when relevant
+- Be warm, knowledgeable, and conversational — like a well-read friend
+
+You have tools to search the library catalog, verify books exist, and retrieve passages. \
+ALWAYS use the search_library or get_book tool to verify a book is in the library before \
+recommending it. When you find relevant books, present them with their Gutenberg ID so \
+the user can open them in the reader.
+
+When presenting book recommendations, format them clearly with the title, author, year, \
+and Gutenberg ID. For example:
+📖 **Moby Dick** by Herman Melville (1851) · #2701
+
+If the user asks about a specific passage or theme in a book, use get_passage to retrieve \
+the actual text and quote it directly.
+
+You know these texts well from your training. Use that knowledge to have rich literary \
+discussions, but always verify availability with the tools before telling the user they \
+can read something."""
+
+
+def _chat_with_tools_sync(messages: list[dict]) -> tuple[str, list[dict]]:
+    """Run the tool-calling chat loop synchronously."""
+    client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY,
+    )
+
+    chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for m in messages:
+        chat_messages.append({"role": m["role"], "content": m["content"]})
+
+    books_mentioned: dict[str, dict] = {}
+
+    for _round in range(MAX_TOOL_ROUNDS):
+        response = client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=chat_messages,
+            tools=TOOLS,
+            max_tokens=2048,
+        )
+
+        choice = response.choices[0]
+
+        if choice.finish_reason == "tool_calls" or (
+            choice.message.tool_calls and len(choice.message.tool_calls) > 0
+        ):
+            # Append the assistant message with tool calls
+            chat_messages.append(choice.message.model_dump())
+
+            for tool_call in choice.message.tool_calls:
+                fn_name = tool_call.function.name
+                try:
+                    fn_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    fn_args = {}
+
+                logger.info("Inspire tool call: %s(%s)", fn_name, fn_args)
+
+                fn = TOOL_DISPATCH.get(fn_name)
+                if fn:
+                    try:
+                        result = fn(**fn_args)
+                    except Exception as e:
+                        logger.exception("Tool %s failed", fn_name)
+                        result = {"error": str(e)}
+                else:
+                    result = {"error": f"Unknown tool: {fn_name}"}
+
+                # Track books mentioned
+                if fn_name == "search_library" and isinstance(result, list):
+                    for book in result:
+                        gid = book.get("gutenberg_id")
+                        if gid:
+                            books_mentioned[gid] = book
+                elif fn_name == "get_book" and isinstance(result, dict) and "gutenberg_id" in result:
+                    books_mentioned[result["gutenberg_id"]] = result
+
+                chat_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result, default=str),
+                })
+        else:
+            # Final text response
+            reply = choice.message.content or ""
+            return reply, list(books_mentioned.values())
+
+    # If we exhausted rounds, get a final response without tools
+    response = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=chat_messages,
+        max_tokens=2048,
+    )
+    reply = response.choices[0].message.content or ""
+    return reply, list(books_mentioned.values())
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
-
-@router.post("/search", response_model=InspireSearchResponse)
-async def inspire_search(
-    body: InspireSearchRequest,
-    current_user: CurrentEDUser,
-) -> Any:
-    """Semantic search over the literature corpus."""
-    if not body.query or not body.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-
-    loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(
-        None, _search_sync, body.query, body.limit, body.era, body.author,
-    )
-
-    results = []
-    for row in rows:
-        results.append(PassageResult(
-            text=row.get("text", ""),
-            title=row.get("title", ""),
-            author=row.get("author", ""),
-            year=row.get("year", 0),
-            era=row.get("era", ""),
-            work_id=row.get("work_id", ""),
-            gutenberg_id=row.get("gutenberg_id", ""),
-            sequence=row.get("sequence", 0),
-            distance=row.get("distance", 0.0),
-        ))
-
-    return InspireSearchResponse(
-        results=results,
-        total=len(results),
-        query=body.query,
-    )
-
-
-@router.get("/browse/authors")
-async def browse_authors(
-    current_user: CurrentEDUser,
-    limit: int = Query(default=50, le=200),
-) -> list[AuthorInfo]:
-    """List authors in the literature corpus."""
-    loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(None, _browse_authors_sync, limit)
-    return [
-        AuthorInfo(
-            name=r.get("name", ""),
-            work_count=r.get("work_count", 0),
-            eras=r.get("eras", []),
-            notable_works=r.get("notable_works", []),
-        )
-        for r in rows
-    ]
-
-
-@router.get("/browse/works")
-async def browse_works(
-    current_user: CurrentEDUser,
-    author: str | None = Query(default=None),
-    era: str | None = Query(default=None),
-    limit: int = Query(default=50, le=200),
-) -> list[WorkInfo]:
-    """List works in the literature corpus with optional filters."""
-    loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(None, _browse_works_sync, author, era, limit)
-    return [
-        WorkInfo(
-            gutenberg_id=r.get("gutenberg_id", ""),
-            title=r.get("title", ""),
-            author=r.get("author", ""),
-            year=r.get("year", 0),
-            era=r.get("era", ""),
-            word_count=r.get("word_count", 0),
-            chunk_count=r.get("chunk_count", 0),
-        )
-        for r in rows
-    ]
-
-
-@router.get("/stats", response_model=CorpusStats)
-async def get_corpus_stats(current_user: CurrentEDUser) -> Any:
-    """Get literature corpus statistics."""
-    loop = asyncio.get_event_loop()
-    stats = await loop.run_in_executor(None, _corpus_stats_sync)
-    return CorpusStats(**stats)
-
 
 @router.post("/chat", response_model=InspireChatResponse)
 async def inspire_chat(
     body: InspireChatRequest,
     current_user: CurrentEDUser,
 ) -> Any:
-    """RAG chat over the literature corpus. Retrieves relevant passages via HNSW
-    and uses them as context for an LLM response."""
+    """Chat with the literary guide. The LLM uses tool-calling to search
+    the library catalog and retrieve passages from the full texts."""
     if not body.messages:
         raise HTTPException(status_code=400, detail="messages cannot be empty")
 
     loop = asyncio.get_event_loop()
-    reply, passage_rows = await loop.run_in_executor(
-        None, _chat_sync,
+    reply, book_rows = await loop.run_in_executor(
+        None, _chat_with_tools_sync,
         [m.model_dump() for m in body.messages],
-        body.limit,
-        body.era,
-        body.author,
     )
 
-    passages = [
-        PassageResult(
-            text=row.get("text", ""),
-            title=row.get("title", ""),
-            author=row.get("author", ""),
-            year=row.get("year", 0),
-            era=row.get("era", ""),
-            work_id=row.get("work_id", ""),
-            gutenberg_id=row.get("gutenberg_id", ""),
-            sequence=row.get("sequence", 0),
-            distance=row.get("distance", 0.0),
+    books = [
+        BookInfo(
+            gutenberg_id=b.get("gutenberg_id", ""),
+            title=b.get("title", ""),
+            author=b.get("author", ""),
+            year=b.get("year", 0),
+            era=b.get("era", ""),
+            gutenberg_url=b.get("gutenberg_url", ""),
         )
-        for row in passage_rows
+        for b in book_rows
     ]
 
-    return InspireChatResponse(reply=reply, passages=passages)
+    return InspireChatResponse(reply=reply, books=books)
 
 
 @router.get("/reader/{gutenberg_id}")
