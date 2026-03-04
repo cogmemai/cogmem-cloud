@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-server
+  namespace: cogmem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llama-server
+  template:
+    metadata:
+      labels:
+        app: llama-server
+    spec:
+      initContainers:
+      # Download the GGUF model from HuggingFace if not already present
+      - name: download-model
+        image: alpine:latest
+        securityContext:
+          runAsUser: 0
+        command:
+        - sh
+        - -c
+        - |
+          if [ -f /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf ]; then
+            echo "Model already downloaded, skipping."
+          else
+            apk add --no-cache wget
+            echo "Downloading model from HuggingFace..."
+            wget -O /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf \
+              "https://huggingface.co/Sangto/T3Q-qwen2.5-14b-v1.0-e3-Q4_K_M-GGUF/resolve/main/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf"
+            echo "Download complete."
+          fi
+        volumeMounts:
+        - name: models
+          mountPath: /models
+      containers:
+      - name: llama-server
+        image: ghcr.io/ggml-org/llama.cpp:server
+        ports:
+        - containerPort: 8080
+          name: http
+        args:
+        - "--model"
+        - "/models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf"
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "8080"
+        - "--ctx-size"
+        - "4096"
+        - "--threads"
+        - "6"
+        - "--parallel"
+        - "2"
+        volumeMounts:
+        - name: models
+          mountPath: /models
+        resources:
+          requests:
+            memory: "10Gi"
+            cpu: "2"
+          limits:
+            memory: "14Gi"
+            cpu: "6"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: llm-models-llama-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-service
+  namespace: cogmem
+spec:
+  selector:
+    app: llama-server
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP

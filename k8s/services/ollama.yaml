@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ollama-modelfile
+  namespace: cogmem
+data:
+  Modelfile: |
+    FROM /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf
+    TEMPLATE """{{- if .System }}<|im_start|>system
+    {{ .System }}<|im_end|>
+    {{ end }}<|im_start|>user
+    {{ .Prompt }}<|im_end|>
+    <|im_start|>assistant
+    """
+    PARAMETER stop "<|im_end|>"
+    PARAMETER num_ctx 4096
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: cogmem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      initContainers:
+      # Step 1: Download the GGUF model from HuggingFace if not already present
+      - name: download-model
+        image: alpine:latest
+        securityContext:
+          runAsUser: 0
+        command:
+        - sh
+        - -c
+        - |
+          if [ -f /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf ]; then
+            echo "Model already downloaded, skipping."
+          else
+            apk add --no-cache wget
+            echo "Downloading model from HuggingFace..."
+            wget -O /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf \
+              "https://huggingface.co/Sangto/T3Q-qwen2.5-14b-v1.0-e3-Q4_K_M-GGUF/resolve/main/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf"
+            echo "Download complete."
+          fi
+        volumeMounts:
+        - name: models
+          mountPath: /models
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        ports:
+        - containerPort: 11434
+          name: http
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_MODELS
+          value: "/root/.ollama/models"
+        volumeMounts:
+        - name: models
+          mountPath: /models
+        - name: ollama-data
+          mountPath: /root/.ollama
+        - name: modelfile
+          mountPath: /modelfile
+        resources:
+          requests:
+            memory: "10Gi"
+            cpu: "2"
+          limits:
+            memory: "14Gi"
+            cpu: "6"
+        # Ollama starts fast, but model creation takes time on first boot
+        startupProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: 11434
+          periodSeconds: 10
+        # Create the model from GGUF after Ollama starts
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - sh
+              - -c
+              - |
+                # Wait for Ollama to be ready
+                until curl -s http://localhost:11434/api/tags > /dev/null 2>&1; do
+                  sleep 2
+                done
+                # Check if model already exists
+                if curl -s http://localhost:11434/api/tags | grep -q "t3q-14b"; then
+                  echo "Model already registered."
+                else
+                  echo "Creating model from GGUF..."
+                  curl -s http://localhost:11434/api/create -d '{
+                    "model": "t3q-14b",
+                    "modelfile": "FROM /models/t3q-qwen2.5-14b-v1.0-e3-q4_k_m.gguf\nPARAMETER stop \"<|im_end|>\"\nPARAMETER num_ctx 4096"
+                  }'
+                  echo "Model created."
+                fi
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: llm-models-ollama-pvc
+      - name: ollama-data
+        emptyDir: {}
+      - name: modelfile
+        configMap:
+          name: ollama-modelfile
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-service
+  namespace: cogmem
+spec:
+  selector:
+    app: ollama
+  ports:
+  - protocol: TCP
+    port: 11434
+    targetPort: 11434
+  type: ClusterIP
