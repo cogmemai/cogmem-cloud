@@ -6,9 +6,10 @@ This file documents the codebase structure, development conventions, and workflo
 
 ## Repository Overview
 
-**cogmem-cloud** is the cloud backend for CogMem's hosted, multi-tenant Knowledge Operating System (KOS) platform. It is a Python monorepo managed with **uv workspaces**, consisting of:
+**cogmem-cloud** is the cloud backend and dashboard for CogMem's hosted, multi-tenant Knowledge Operating System (KOS) platform. It is a Python monorepo managed with **uv workspaces**, consisting of:
 
-- `api/` — FastAPI backend (the primary workspace member)
+- `api/` — FastAPI backend (the primary uv workspace member)
+- `cockpit/` — Next.js 16 dashboard frontend (`dashboard.cogmem.ai`)
 - `k8s/` — Kubernetes manifests for bare-metal RKE2 deployment
 
 The backend serves two distinct product surfaces:
@@ -95,6 +96,22 @@ cogmem-cloud/
 │   ├── Dockerfile                # Multi-stage uv build (python:3.12)
 │   ├── alembic.ini
 │   └── pyproject.toml            # api/ package metadata + tool config
+├── cockpit/                      # Next.js 16 dashboard (ghcr.io/cogmemai/cogmem-cockpit)
+│   ├── src/
+│   │   ├── app/                  # Next.js app router pages
+│   │   │   ├── api/              # API routes (server-side proxy)
+│   │   │   ├── documents/        # Document management views
+│   │   │   ├── logs/             # Activity logs
+│   │   │   └── playground/       # AI workbench playground
+│   │   ├── components/
+│   │   │   └── ui/               # Shadcn/ui components (Radix UI based)
+│   │   ├── hooks/                # Custom React hooks
+│   │   ├── lib/                  # Utility libraries
+│   │   └── api/                  # API client helpers
+│   ├── Dockerfile                # Multi-stage Node 20 Alpine build
+│   ├── next.config.ts
+│   ├── tsconfig.json
+│   └── package.json              # Next.js 16, React 19, Tailwind 4, Zustand 5
 ├── k8s/
 │   ├── base/                     # Namespace, ConfigMap, secrets template, PVCs, StorageClass
 │   ├── services/                 # Deployments: backend, cockpit, frontend, ollama, llama-server
@@ -139,7 +156,8 @@ cogmem-cloud/
 | Orchestration | Kubernetes RKE2 (bare-metal OVH) |
 | CI/CD | Manual (docker push to GHCR, kubectl apply) |
 | Monitoring | Sentry SDK |
-| Frontend | Separate repo (Vercel) |
+| Dashboard (cockpit) | Next.js 16, React 19, Tailwind CSS 4, Zustand 5, Shadcn/ui |
+| Evening Draft frontend | Separate repo on Vercel |
 
 ---
 
@@ -213,6 +231,16 @@ uv run uvicorn app.main:app --reload
 ```
 
 API is available at `http://localhost:8000`. OpenAPI docs at `http://localhost:8000/api/v1/openapi.json`.
+
+### Running the Cockpit (Dashboard)
+
+```bash
+cd cockpit
+npm install
+npm run dev      # http://localhost:3000
+npm run build    # production build
+npm run lint     # ESLint check
+```
 
 ---
 
@@ -341,19 +369,30 @@ All routes are prefixed `/api/v1/` and defined in `api/app/api/main.py`:
 
 ## Deployment
 
-### Docker Image
+### Docker Images
 
 ```bash
-# Build from repo root (Dockerfile at api/Dockerfile)
+# Backend
 docker build -f api/Dockerfile -t ghcr.io/cogmemai/cogmem-backend:latest .
 docker push ghcr.io/cogmemai/cogmem-backend:latest
+
+# Cockpit dashboard
+docker build -f cockpit/Dockerfile -t ghcr.io/cogmemai/cogmem-cockpit:latest cockpit/
+docker push ghcr.io/cogmemai/cogmem-cockpit:latest
+
+# Authenticate to GHCR first
+bash docker-login.sh
 ```
 
-The Dockerfile:
+The **backend** Dockerfile:
 1. Copies `uv` from the official uv image
 2. Installs workspace dependencies (layer-cached)
 3. Copies `api/app`, `api/kos`, `api/kos_extensions`
 4. Runs `fastapi run --workers 4 app/main.py`
+
+The **cockpit** Dockerfile is a multi-stage Node 20 Alpine build:
+1. Installs dependencies, runs `next build`
+2. Produces a minimal production image running `next start`
 
 ### Kubernetes (RKE2)
 
