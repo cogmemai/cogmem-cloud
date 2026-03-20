@@ -22,11 +22,8 @@ spec:
     - api.cogmem.ai
     - dashboard.cogmem.ai
     - neo4j.cogmem.ai
-    - qdrant.cogmem.ai
     - surrealdb.cogmem.ai
-    - adminer.cogmem.ai
-    - opensearch.cogmem.ai
-    - opensearch-dashboards.cogmem.ai
+    - openclaw.cogmem.ai
     secretName: cogmem-tls
   rules:
   # Backend API
@@ -124,3 +121,15 @@ spec:
             name: opensearch-dashboards-service
             port:
               number: 5601
+  
+  # OpenClaw Gateway
+  - host: openclaw.cogmem.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: openclaw-researcher-service
+            port:
+              number: 18789
